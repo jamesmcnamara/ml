@@ -1,0 +1,47 @@
+|Total Entries: 150,
+|Entropy: 1.585,
+|Split on column: 2
+|    
++---Left:
+|        Total Entries: 50,
+|        Entropy: -0.000
+|    
++---Right:
+     |   Total Entries: 100,
+     |   Entropy: 1.000,
+     |   Split on column: 3
+     |
+     +--Left:
+     |   |    Total Entries: 54,
+     |   |    Entropy: 0.445,
+     |   |    Split on column: 0
+     |   |
+     |   +--Left:
+     |   |   |     Total Entries: 53,
+     |   |   |     Entropy: 0.386,
+     |   |   |     Split on column: 1
+     |   |   |
+     |   |   +-----Left:
+     |   |   |         Total Entries: 31,
+     |   |   |         Entropy: 0.555
+     |   |   |
+     |   |   +-----Right:
+     |   |           Total Entries: 22,
+     |   |           Entropy: -0.000
+     |   |   
+     |   +--Right:
+     |           Total Entries: 1,
+     |           Entropy: -0.000
+     |   
+     +--Right:
+         |   Total Entries: 46,
+         |   Entropy: 0.151,
+         |   Split on column: 0
+         |   
+         +--Left:
+         |       Total Entries: 7,
+         |       Entropy: 0.592
+         |   
+         +--Right:
+                Total Entries: 39,
+                Entropy: -0.000
