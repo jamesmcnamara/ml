@@ -1,6 +1,7 @@
 import argparse
 import json
 import numpy as np
+from math import sqrt
 from decision_tree import DecisionTree
 
 __author__ = 'jamesmcnamara'
@@ -46,10 +47,13 @@ class DataStore:
         self.result_map = {result: i for i, result in enumerate(self.result_types)}
         self.results = [self.result_map[val] for val in self.results]
 
+        print("Completed data load, beginning cross validation")
         # Create the decision trees
-        # start, stop, step = parser.range
-        # self.d_trees = {eta_percent: DecisionTree(data_store=self, eta=int(len(self.data)/eta_percent))
-        #                 for eta_percent in range(start, stop + 1, step)}
+        start, stop, step = parser.range
+        for eta_percent in range(start, stop + 1, step):
+            avg, sd = self.cross_fold_validation(eta_percent)
+            print("{}% eta gave a classification accuracy of {:.2f}% with a standard deviation of {:.2f}%"
+                  .format(eta_percent, avg * 100, sd * 100))
 
     def extract(self, file, width, height):
         """
@@ -94,19 +98,35 @@ class DataStore:
 
     @staticmethod
     def chunk(data, segments):
+        """
+            Consumes a list and a number and returns a the input list split into n chunks in order
+        """
         return list(zip(*[iter(data)] * (len(data) // segments)))
 
-    def find_best_tree(self, eta):
+    def cross_fold_validation(self, eta):
+        """
+            Splits this data set into k chunks based on the k_validation attribute, and excludes each chunk,
+            one at a time, from the input data set to a decision tree, and then tests that decision tree on
+            the excluded data set. The function accumulates each of the accuracy measures, and returns the
+            average accuracy and the standard deviation
+        :param eta: eta min for the decision trees (early stopping strategy)
+        :return: 2-tuple of average accuracy and standard deviation
+        """
         data_chunks = self.chunk(self.data, self.k_validation)
         result_chunks = self.chunk(self.results, self.k_validation)
-
+        accuracies = []
         for i in range(self.k_validation):
             test_data, test_results = data_chunks.pop(i), result_chunks.pop(i)
             d = DecisionTree(data=np.concatenate(data_chunks), results=np.concatenate(result_chunks),
                              data_store=self, eta=eta)
-            accuracy = d.test(test_data, test_results)
-            data_chunks.index(test_data, i)
+            accuracies.append(d.test(test_data, test_results))
+            print("Accuracy was {:.2f}%".format(accuracies[-1] * 100))
+            data_chunks.insert(i, test_data)
+            result_chunks.insert(i, test_results)
 
+        avg_accuracy = sum(accuracies) / len(accuracies)
+        sd_accuracy = sqrt(sum(map(lambda acc: (acc - avg_accuracy) ** 2, accuracies)))
+        return avg_accuracy, sd_accuracy
 
 ds = DataStore()
 
