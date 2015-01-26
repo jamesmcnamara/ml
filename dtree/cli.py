@@ -2,7 +2,7 @@ import argparse
 import json
 import numpy as np
 from math import sqrt
-from decision_tree import DecisionTree
+from decision_tree import EntropyTree, RegressionTree
 
 __author__ = 'jamesmcnamara'
 
@@ -18,13 +18,18 @@ def load_data():
     parser.add_argument("-r", "--range", type=int, nargs=3,
                         help="Range of eta values to use for cross validation. The first "
                              "value is start, the second is end, and the last is interval")
-    parser.add_argument("-t", "--type", type=str,
-                        help="Type of the columns in 'infile'. Options are: "
-                             "'num', 'choice', 'str'. Must be homogeneous.")
     parser.add_argument("-m", "--meta", type=open, help="Meta file containing JSON formatted descriptions of the data")
 
-    parser.add_argument("-c", "--cross", type=int, default=10,
+    parser.add_argument("-cv", "--cross", type=int, default=10,
                         help="Set the parameter for k-fold cross validation. Default 10")
+    parser.add_argument("-t", "--tree", type=str, default="entropy",
+                        help="What type of decision tree to build for the data. Options are "
+                             "'entropy' or 'regression'. Default 'entropy'")
+    parser.add_argument("-d", "--debug", type=bool, default=False,
+                        help="Use sci-kit learn instead of ours, to test that the behavior is correct")
+
+    parser.add_argument("-cf", "--confusion", type=bool, default=False,
+                        help="include a confusion matrix in the output")
 
     return parser.parse_args()
 
@@ -37,23 +42,39 @@ class DataStore:
         self.width, self.height, self.type = self.meta["width"], self.meta["height"], self.meta["type"]
         self.data, self.results = self.extract(parser.infile, self.width, self.height)
         self.k_validation = parser.cross
+        self.tree_type = EntropyTree if parser.tree == "entropy" else RegressionTree
+        self.confusion = parser.confusion
+        self.debug = parser.debug
 
         # Clean Data
-        self.shuffle()
+        # self.shuffle()
         self.normalize_columns()
 
-        # Reference data
-        self.result_types = set(self.results)
-        self.result_map = {result: i for i, result in enumerate(self.result_types)}
-        self.results = [self.result_map[val] for val in self.results]
+        # Reference data for classifiers
+        if self.tree_type == EntropyTree:
+            self.result_types = set(self.results)
+            self.result_map = {result: i for i, result in enumerate(self.result_types)}
+            self.results = [self.result_map[val] for val in self.results]
+        elif self.tree_type == RegressionTree:
+            self.results = list(map(float, self.results))
 
         print("Completed data load, beginning cross validation")
         # Create the decision trees
         start, stop, step = parser.range
         for eta_percent in range(start, stop + 1, step):
-            avg, sd = self.cross_fold_validation(eta_percent)
-            print("{}% eta gave a classification accuracy of {:.2f}% with a standard deviation of {:.2f}%"
-                  .format(eta_percent, avg * 100, sd * 100))
+            if self.debug:
+                test_func = self.scikit_classifier if self.tree_type == EntropyTree else self.scikit_regressor
+            else:
+                test_func = self.our_test
+
+            avg, sd = self.cross_fold_validation(eta_percent, test_func)
+
+            if self.tree_type == EntropyTree:
+                print("{}% eta gave a classification accuracy of {:.2f}% with a standard deviation of {:.2f}%"
+                      .format(eta_percent, avg * 100, sd * 100))
+            else:
+                print("{}% eta had an average MSE of {:.2f} with a standard deviation of {:.2f}%"
+                      .format(eta_percent, avg, sd))
 
     def extract(self, file, width, height):
         """
@@ -103,7 +124,7 @@ class DataStore:
         """
         return list(zip(*[iter(data)] * (len(data) // segments)))
 
-    def cross_fold_validation(self, eta):
+    def cross_fold_validation(self, eta, test_func):
         """
             Splits this data set into k chunks based on the k_validation attribute, and excludes each chunk,
             one at a time, from the input data set to a decision tree, and then tests that decision tree on
@@ -112,15 +133,13 @@ class DataStore:
         :param eta: eta min for the decision trees (early stopping strategy)
         :return: 2-tuple of average accuracy and standard deviation
         """
+
         data_chunks = self.chunk(self.data, self.k_validation)
         result_chunks = self.chunk(self.results, self.k_validation)
         accuracies = []
         for i in range(self.k_validation):
             test_data, test_results = data_chunks.pop(i), result_chunks.pop(i)
-            d = DecisionTree(data=np.concatenate(data_chunks), results=np.concatenate(result_chunks),
-                             data_store=self, eta=eta)
-            accuracies.append(d.test(test_data, test_results))
-            print("Accuracy was {:.2f}%".format(accuracies[-1] * 100))
+            test_func(len(self.data) * (eta / 100), data_chunks, result_chunks, test_data, test_results, accuracies)
             data_chunks.insert(i, test_data)
             result_chunks.insert(i, test_results)
 
@@ -128,7 +147,29 @@ class DataStore:
         sd_accuracy = sqrt(sum(map(lambda acc: (acc - avg_accuracy) ** 2, accuracies)))
         return avg_accuracy, sd_accuracy
 
+    def our_test(self, eta, data_chunks, result_chunks, test_data, test_results, accuracies):
+        d = self.tree_type(data=np.concatenate(data_chunks), results=np.concatenate(result_chunks),
+                           data_store=self, eta=eta)
+        accuracies.append(d.test(test_data, test_results, with_confusion=self.confusion))
+        if self.confusion:
+            print(accuracies.pop())
+
+    def scikit_classifier(self, eta, data_chunks, result_chunks, test_data, test_results, accuracies):
+        from sklearn.tree import DecisionTreeClassifier
+        clf = DecisionTreeClassifier(criterion="entropy", min_samples_split=eta)
+        clf.fit(np.concatenate(data_chunks), np.concatenate(result_chunks))
+        accuracies.append(sum(map(lambda arr_and_result: arr_and_result[0] == arr_and_result[1],
+                                  zip(clf.predict(test_data), test_results))) / len(test_data))
+
+    def scikit_regressor(self, eta, data_chunks, result_chunks, test_data, test_results, accuracies):
+        from sklearn.tree import DecisionTreeRegressor
+        print("Eta is {}".format(eta))
+        clf = DecisionTreeRegressor(min_samples_split=eta)
+        clf.fit(np.concatenate(data_chunks), np.concatenate(result_chunks))
+        predicted = clf.predict(test_data)
+        accuracies.append(RegressionTree.mean_squared_error(test_results, accuracies))
+
 ds = DataStore()
 
-from code import interact
-interact(local=locals())
+# from code import interact
+# interact(local=locals())
