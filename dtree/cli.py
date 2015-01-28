@@ -2,9 +2,11 @@ import argparse
 import json
 import numpy as np
 from math import sqrt
-from decision_tree import EntropyTree, RegressionTree
+from decision_tree import EntropyTree, RegressionTree, CategoricalEntropyTree
 
 __author__ = 'jamesmcnamara'
+
+tree_map = {"entropy": EntropyTree, "regression": RegressionTree, 'categorical': CategoricalEntropyTree}
 
 
 def load_data():
@@ -18,13 +20,14 @@ def load_data():
     parser.add_argument("-r", "--range", type=int, nargs=3,
                         help="Range of eta values to use for cross validation. The first "
                              "value is start, the second is end, and the last is interval")
-    parser.add_argument("-m", "--meta", type=open, help="Meta file containing JSON formatted descriptions of the data")
+    parser.add_argument("-m", "--meta", type=open, default=None,
+                        help="Meta file containing JSON formatted descriptions of the data")
 
     parser.add_argument("-cv", "--cross", type=int, default=10,
                         help="Set the parameter for k-fold cross validation. Default 10")
     parser.add_argument("-t", "--tree", type=str, default="entropy",
                         help="What type of decision tree to build for the data. Options are "
-                             "'entropy' or 'regression'. Default 'entropy'")
+                             "'entropy', 'regression', or 'categorical'. Default 'entropy'")
     parser.add_argument("-d", "--debug", type=bool, default=False,
                         help="Use sci-kit learn instead of ours, to test that the behavior is correct")
 
@@ -38,24 +41,26 @@ class DataStore:
     def __init__(self):
         # Load data
         parser = load_data()
-        self.meta = json.load(parser.meta)
+        self.meta = json.load(parser.meta) if parser.meta \
+            else json.load(open(parser.infile.name.replace(".csv", ".meta")))
         self.width, self.height, self.type = self.meta["width"], self.meta["height"], self.meta["type"]
         self.data, self.results = self.extract(parser.infile, self.width, self.height)
         self.k_validation = parser.cross
-        self.tree_type = EntropyTree if parser.tree == "entropy" else RegressionTree
+        self.tree_type = tree_map[parser.tree]
         self.confusion = parser.confusion
         self.debug = parser.debug
 
         # Clean Data
-        # self.shuffle()
-        self.normalize_columns()
+        self.shuffle()
+        if self.tree_type != CategoricalEntropyTree:
+            self.normalize_columns()
 
         # Reference data for classifiers
-        if self.tree_type == EntropyTree:
+        if self.tree_type != RegressionTree:
             self.result_types = set(self.results)
             self.result_map = {result: i for i, result in enumerate(self.result_types)}
             self.results = [self.result_map[val] for val in self.results]
-        elif self.tree_type == RegressionTree:
+        else:
             self.results = list(map(float, self.results))
 
         print("Completed data load, beginning cross validation")
@@ -69,7 +74,7 @@ class DataStore:
 
             avg, sd = self.cross_fold_validation(eta_percent, test_func)
 
-            if self.tree_type == EntropyTree:
+            if self.tree_type != RegressionTree:
                 print("{}% eta gave a classification accuracy of {:.2f}% with a standard deviation of {:.2f}%"
                       .format(eta_percent, avg * 100, sd * 100))
             else:
@@ -116,7 +121,6 @@ class DataStore:
         for index, norm_col in enumerate(column_mapper(col) for col in self.data.T):
             self.data[:, index] = list(norm_col)
 
-
     @staticmethod
     def chunk(data, segments):
         """
@@ -131,6 +135,8 @@ class DataStore:
             the excluded data set. The function accumulates each of the accuracy measures, and returns the
             average accuracy and the standard deviation
         :param eta: eta min for the decision trees (early stopping strategy)
+        :param test_func: a function to pass all of the relevant information too, which will append the accuracy
+            of some test to our accuracies list
         :return: 2-tuple of average accuracy and standard deviation
         """
 
@@ -139,22 +145,44 @@ class DataStore:
         accuracies = []
         for i in range(self.k_validation):
             test_data, test_results = data_chunks.pop(i), result_chunks.pop(i)
-            test_func(len(self.data) * (eta / 100), data_chunks, result_chunks, test_data, test_results, accuracies)
+            test_func(len(self.data) * (eta / 100), np.concatenate(data_chunks), np.concatenate(result_chunks),
+                      test_data, test_results, accuracies)
             data_chunks.insert(i, test_data)
             result_chunks.insert(i, test_results)
 
-        avg_accuracy = sum(accuracies) / len(accuracies)
-        sd_accuracy = sqrt(sum(map(lambda acc: (acc - avg_accuracy) ** 2, accuracies)))
-        return avg_accuracy, sd_accuracy
+        if self.confusion:
+            print(sum(accuracies))
+            return 0, 0
+        else:
+            avg_accuracy = sum(accuracies) / len(accuracies)
+            sd_accuracy = sqrt(sum(map(lambda acc: (acc - avg_accuracy) ** 2, accuracies)))
+            return avg_accuracy, sd_accuracy
 
     def our_test(self, eta, data_chunks, result_chunks, test_data, test_results, accuracies):
-        d = self.tree_type(data=np.concatenate(data_chunks), results=np.concatenate(result_chunks),
-                           data_store=self, eta=eta)
+        """
+            Uses our decision tree to test the given data
+        :param eta: eta min for the tree to be built
+        :param data_chunks: Training data
+        :param result_chunks: Training data results
+        :param test_data: test data
+        :param test_results: results for test data
+        :param accuracies: list to add the accuracy of this test to
+        :return:
+        """
+        d = self.tree_type(data=data_chunks, results=result_chunks, data_store=self, eta=eta)
         accuracies.append(d.test(test_data, test_results, with_confusion=self.confusion))
-        if self.confusion:
-            print(accuracies.pop())
 
     def scikit_classifier(self, eta, data_chunks, result_chunks, test_data, test_results, accuracies):
+        """
+            Uses scikit learns decision tree classifier to test the given data to compare our success
+        :param eta: eta min for the tree to be built
+        :param data_chunks: Training data
+        :param result_chunks: Training data results
+        :param test_data: test data
+        :param test_results: results for test data
+        :param accuracies: list to add the accuracy of this test to
+        :return:
+        """
         from sklearn.tree import DecisionTreeClassifier
         clf = DecisionTreeClassifier(criterion="entropy", min_samples_split=eta)
         clf.fit(np.concatenate(data_chunks), np.concatenate(result_chunks))
@@ -162,14 +190,21 @@ class DataStore:
                                   zip(clf.predict(test_data), test_results))) / len(test_data))
 
     def scikit_regressor(self, eta, data_chunks, result_chunks, test_data, test_results, accuracies):
+        """
+            Uses scikit learns decision tree classifier to test the given data to compare our success
+        :param eta: eta min for the tree to be built
+        :param data_chunks: Training data
+        :param result_chunks: Training data results
+        :param test_data: test data
+        :param test_results: results for test data
+        :param accuracies: list to add the accuracy of this test to
+        :return:
+        """
         from sklearn.tree import DecisionTreeRegressor
         print("Eta is {}".format(eta))
         clf = DecisionTreeRegressor(min_samples_split=eta)
         clf.fit(np.concatenate(data_chunks), np.concatenate(result_chunks))
         predicted = clf.predict(test_data)
-        accuracies.append(RegressionTree.mean_squared_error(test_results, accuracies))
+        accuracies.append(RegressionTree.mean_squared_error(test_results, predicted))
 
 ds = DataStore()
-
-# from code import interact
-# interact(local=locals())
