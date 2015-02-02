@@ -3,6 +3,7 @@ import json
 import numpy as np
 from math import sqrt
 from decision_tree import EntropyTree, RegressionTree, CategoricalEntropyTree
+from collections import namedtuple
 
 __author__ = 'jamesmcnamara'
 
@@ -28,11 +29,14 @@ def load_data():
     parser.add_argument("-t", "--tree", type=str, default="entropy",
                         help="What type of decision tree to build for the data. Options are "
                              "'entropy', 'regression', or 'categorical'. Default 'entropy'")
-    parser.add_argument("-d", "--debug", type=bool, default=False,
+    parser.add_argument("-d", "--debug", action="store_true", default=False,
                         help="Use sci-kit learn instead of ours, to test that the behavior is correct")
 
-    parser.add_argument("-cf", "--confusion", type=bool, default=False,
+    parser.add_argument("-cf", "--with-confusion", action="store_true", default=False,
                         help="include a confusion matrix in the output")
+
+    parser.add_argument("-b", "--binary-splits", action="store_true", default=False,
+                        help="Convert a multi-way categorical matrix to a binary matrix")
 
     return parser.parse_args()
 
@@ -47,13 +51,16 @@ class DataStore:
         self.data, self.results = self.extract(parser.infile, self.width, self.height)
         self.k_validation = parser.cross
         self.tree_type = tree_map[parser.tree]
-        self.confusion = parser.confusion
+        self.confusion = parser.with_confusion
         self.debug = parser.debug
 
         # Clean Data
         self.shuffle()
         if self.tree_type != CategoricalEntropyTree:
             self.normalize_columns()
+        elif parser.binary_splits:
+            self.data = self.binarize_columns(self.data)
+            self.tree_type = tree_map["entropy"]
 
         # Reference data for classifiers
         if self.tree_type != RegressionTree:
@@ -122,6 +129,32 @@ class DataStore:
             self.data[:, index] = list(norm_col)
 
     @staticmethod
+    def binarize_columns(data):
+
+        # Offset data container
+        OffsetData = namedtuple("ColData", ["offset", "symbol_map"])
+        offset, cols = 0, []
+
+        # Create a list where the i-th element contains the offset for the i-th column and a dictionary mapping
+        # each possible symbol in ith column to its additional offset
+        for column in data.T:
+            cols.append(OffsetData(offset, {symbol: i for i, symbol in enumerate(set(column))}))
+            offset += len(cols[-1].symbol_map)
+
+        last_offset, last_symbols = cols[-1]
+        width = last_offset + len(last_symbols)
+
+        # Initialize the array of binary data
+        bin_data = np.zeros((len(data), width), np.dtype('b'))
+        for i, row in enumerate(data):
+            binary_row = np.zeros(width, np.dtype('b'))
+            for column, symbol in enumerate(row):
+                offset_data = cols[column]
+                binary_row[offset_data.offset + offset_data.symbol_map[symbol]] = True
+            bin_data[i] = binary_row
+        return bin_data
+
+    @staticmethod
     def chunk(data, segments):
         """
             Consumes a list and a number and returns a the input list split into n chunks in order
@@ -167,7 +200,6 @@ class DataStore:
         :param test_data: test data
         :param test_results: results for test data
         :param accuracies: list to add the accuracy of this test to
-        :return:
         """
         d = self.tree_type(data=data_chunks, results=result_chunks, data_store=self, eta=eta)
         accuracies.append(d.test(test_data, test_results, with_confusion=self.confusion))
@@ -181,13 +213,12 @@ class DataStore:
         :param test_data: test data
         :param test_results: results for test data
         :param accuracies: list to add the accuracy of this test to
-        :return:
         """
         from sklearn.tree import DecisionTreeClassifier
         clf = DecisionTreeClassifier(criterion="entropy", min_samples_split=eta)
-        clf.fit(np.concatenate(data_chunks), np.concatenate(result_chunks))
-        accuracies.append(sum(map(lambda arr_and_result: arr_and_result[0] == arr_and_result[1],
-                                  zip(clf.predict(test_data), test_results))) / len(test_data))
+        clf.fit(data_chunks, result_chunks)
+        accuracies.append(sum(map(lambda actual, expected: actual == expected,
+                                  test_results, clf.predict(test_data))) / len(test_data))
 
     def scikit_regressor(self, eta, data_chunks, result_chunks, test_data, test_results, accuracies):
         """
@@ -198,12 +229,10 @@ class DataStore:
         :param test_data: test data
         :param test_results: results for test data
         :param accuracies: list to add the accuracy of this test to
-        :return:
         """
         from sklearn.tree import DecisionTreeRegressor
-        print("Eta is {}".format(eta))
         clf = DecisionTreeRegressor(min_samples_split=eta)
-        clf.fit(np.concatenate(data_chunks), np.concatenate(result_chunks))
+        clf.fit(data_chunks, result_chunks)
         predicted = clf.predict(test_data)
         accuracies.append(RegressionTree.mean_squared_error(test_results, predicted))
 

@@ -1,7 +1,7 @@
 import numpy as np
 from math import log2
 from abc import ABCMeta, abstractmethod
-from collections import namedtuple, defaultdict
+from collections import namedtuple, defaultdict, Counter
 
 
 def lg(num):
@@ -18,21 +18,15 @@ class DecisionTree:
     __metaclass__ = ABCMeta
 
     def __init__(self, data_store=None, eta=0, data=None, results=None, parent=None):
-        if parent:
-            assert data is not None and results is not None, \
-                "You must pass in all three of data, results and parent or none at all " \
-                "to the constructor of the decision tree"
-            self.parent = parent
-            self.data_store = parent.data_store
-            self.eta = self.parent.eta
-            self.used_columns = list(parent.used_columns)
-        else:
-            assert data_store is not None and eta is not 0 and data is not None and results is not None, \
-                "When creating a DecisionTree without a parent, you must supply a DataStore, data, results and eta min"
-            self.data_store = data_store
-            self.eta = eta
-            self.used_columns = []
-            self.parent = None
+        exists = lambda *l: all(map(lambda element: element is not None and element is not 0, l))
+
+        assert exists(data, results, parent) or exists(data_store, results, data, eta), \
+            "To construct a DecisionTree, you must either pass in keyword arguments " \
+            "for data and results and either parent, or eta and data_store"
+        self.parent = parent
+        self.data_store = data_store or parent.data_store
+        self.eta = eta or self.parent.eta
+        self.used_columns = list(parent.used_columns) if parent else []
 
         self.data, self.results = data, results
 
@@ -144,14 +138,6 @@ class DecisionTree:
         """
         raise NotImplementedError("Concrete subclasses of decision tree must "
                                   "implement their own testing method")
-    @abstractmethod
-    def classify(self, row):
-        """
-            Consumes an observation and returns the classification of that observation via this tree
-        :param row: observational data (1D array)
-        :return: The classification that this tree makes of that data
-        """
-        raise NotImplementedError("Concrete subclasses of DecisionTree must implement a classify method")
 
     def depth(self, initial_count=0):
         """
@@ -280,6 +266,7 @@ class CategoricalTree(DecisionTree):
         """
         symbol_to_data = defaultdict(lambda: ([], []))
         for row, result in zip(self.data, self.results):
+
             # Look up the symbol in the current row in the children dictionary, and adds the
             # current row and result to the collections stored at that symbol
             data, results = symbol_to_data[row[column]]
@@ -323,45 +310,12 @@ class EntropyMixin(DecisionTree):
 
         return -sum(lg(count / element_count) * (count / element_count) for count in result_dist if count)
 
-
-class CategoricalEntropyTree(CategoricalTree, EntropyMixin):
     def value(self):
         """
             Determines what value observations in this node should be applied
         :return: the value for nodes in this tree
         """
-        most_common_class, max_count = 0, 0
-        for i in range(len(self.data_store.result_types)):
-            if self.results.count(i) > max_count:
-                most_common_class, max_count = i, self.results.count(i)
-        return most_common_class
-
-    def test(self, data, results, with_confusion=False):
-        """
-            Returns a measure of the accuracy of classifying the observation in data using this tree
-        :param data: observations that this tree was not trained on
-        :param results: the related results
-        :return: Some measure of the accuracy
-        """
-        return sum(map(lambda actual, expected: actual == expected, results, map(self.classify, data))) / len(data)
-
-    def classify(self, observation):
-        if self.split_on.column != -1:
-            return self.children[observation[self.split_on.column]].classify(observation)
-        else:
-            return self.classification
-
-
-class EntropyTree(BinaryTree, EntropyMixin):
-    def value(self):
-        """
-            Classifies nodes in this tree by which result is most frequent in this node
-        :return:
-        """
-        most_common_class, max_count = 0, 0
-        for i in range(len(self.data_store.result_types)):
-            if self.results.count(i) > max_count:
-                most_common_class, max_count = i, self.results.count(i)
+        [(most_common_class, _)] = Counter(self.results).most_common(1)
         return most_common_class
 
     def test(self, data, results, with_confusion=False):
@@ -377,10 +331,39 @@ class EntropyTree(BinaryTree, EntropyMixin):
             for row, result in zip(data, results):
                 classification = self.classify(row)
                 confusion[result, classification] += 1
+            print(self.data_store.result_map)
             return confusion
         else:
             return sum(map(lambda actual, expected: actual == expected, results, map(self.classify, data))) / len(data)
 
+    @abstractmethod
+    def classify(self, observation):
+        """
+            Consumes an observation and outputs the classification that this tree would apply to the row
+        :param observation: a row of observational data
+        :return: the label that would be applied to the given row
+        """
+        raise NotImplementedError("EntropyTrees must implement a classify method "
+                                  "that applies a prediction to an observation")
+
+
+class CategoricalEntropyTree(CategoricalTree, EntropyMixin):
+    def classify(self, observation):
+        """
+            Consumes an observation and outputs the classification that this tree would apply to the row
+        :param observation: a row of observational data
+        :return: the label that would be applied to the given row
+        """
+        if self.split_on.column != -1:
+            return self.children[observation[self.split_on.column]].classify(observation)
+        else:
+            return self.classification
+
+    def __str__(self):
+        return super().__str__()
+
+
+class EntropyTree(BinaryTree, EntropyMixin):
     def classify(self, row):
         """
             Consumes an observation returns the classification of that observation via this tree and if this tree is a leaf,
@@ -397,15 +380,6 @@ class EntropyTree(BinaryTree, EntropyMixin):
                 return self.right.classify(row)
         else:
             return self.classification
-
-    def match(self, row_and_result):
-        """
-            Determines if the given observation was classified correctly by this tree
-        :param row_and_result: a 2-tuple of observational data (1D array) and the result for that observation
-        :return: True if this tree correctly classified the input else False
-        """
-        row, result = row_and_result
-        return self.classify(row) == result
 
     def __str__(self):
         """
@@ -464,7 +438,7 @@ class RegressionTree(BinaryTree):
     @staticmethod
     def avg_generator(results):
         """
-            Consumes a list of numbers and return a generator which yields the average forever
+            Consumes a list of numbers and returns a generator which yields the average forever
         :param results: 1D array of integers
         :return: iterator which always yields the average of the input set
         """
@@ -475,7 +449,7 @@ class RegressionTree(BinaryTree):
     def value(self):
         """
             Classifies nodes in this tree by the average of the results data set
-        :return:
+        :return: Average value of the classifications for this tree
         """
         return sum(self.results) / len(self.results)
 
@@ -487,20 +461,19 @@ class RegressionTree(BinaryTree):
         :param results: array of resulting data, with the indices matching the rows of data
         :return: mean squared error obtained by classifying the data with this tree
         """
-        return self.mean_squared_error(results, (self.regress(row, result) for row, result in zip(data, results)))
+        return self.mean_squared_error(results, (self.regress(row) for row in data))
 
-    def regress(self, row, result):
+    def regress(self, row):
         """
-            Returns the error obtained by
+            Classifies the given row and
         :param row:
-        :param result:
-        :return:
+        :return: classification
         """
         if self.split_on.splitter:
             if self.split_on.splitter(row[self.split_on.column]):
-                return self.left.regress(row, result)
+                return self.left.regress(row)
             else:
-                return self.right.regress(row, result)
+                return self.right.regress(row)
         else:
             return self.value()
 
