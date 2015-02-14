@@ -2,7 +2,8 @@ import argparse
 import json
 import numpy as np
 from math import sqrt
-from decision_tree import EntropyTree, RegressionTree, CategoricalEntropyTree
+from dtree.classification_tree import EntropyTree, CategoricalEntropyTree
+from dtree.regression_tree import RegressionTree
 from collections import namedtuple
 
 __author__ = 'jamesmcnamara'
@@ -15,7 +16,7 @@ def load_data():
         Parses the command line arguments, and loads the arguments onto an ArgumentParser object, which it returns
     :return: an ArgumentParser object with all of the specified command line features written on
     """
-    parser = argparse.ArgumentParser(description="Decision tree generator for CSV files")
+    parser = argparse.ArgumentParser(description="General purpose command line machine learning tool.")
 
     parser.add_argument("infile", type=open, help="CSV file with training data")
     parser.add_argument("-r", "--range", type=int, nargs=3,
@@ -30,10 +31,10 @@ def load_data():
                         help="What type of decision tree to build for the data. Options are "
                              "'entropy', 'regression', or 'categorical'. Default 'entropy'")
     parser.add_argument("-d", "--debug", action="store_true", default=False,
-                        help="Use sci-kit learn instead of ours, to test that the behavior is correct")
+                        help="Use sci-kit learn instead of learn.py, to test that the behavior is correct")
 
     parser.add_argument("-cf", "--with-confusion", action="store_true", default=False,
-                        help="include a confusion matrix in the output")
+                        help="Include a confusion matrix in the output")
 
     parser.add_argument("-b", "--binary-splits", action="store_true", default=False,
                         help="Convert a multi-way categorical matrix to a binary matrix")
@@ -130,7 +131,6 @@ class DataStore:
 
     @staticmethod
     def binarize_columns(data):
-
         # Offset data container
         OffsetData = namedtuple("ColData", ["offset", "symbol_map"])
         offset, cols = 0, []
@@ -188,7 +188,7 @@ class DataStore:
             return 0, 0
         else:
             avg_accuracy = sum(accuracies) / len(accuracies)
-            sd_accuracy = sqrt(sum(map(lambda acc: (acc - avg_accuracy) ** 2, accuracies)))
+            sd_accuracy = sqrt(sum(map(lambda acc: (acc - avg_accuracy) ** 2, accuracies)) / (self.k_validation - 1))
             return avg_accuracy, sd_accuracy
 
     def our_test(self, eta, data_chunks, result_chunks, test_data, test_results, accuracies):

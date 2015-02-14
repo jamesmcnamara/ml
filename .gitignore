@@ -1,0 +1,5 @@
+.idea
+*.swp
+*.pyc
+turnin/*
+env_ml/*
