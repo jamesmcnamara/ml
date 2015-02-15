@@ -9,12 +9,12 @@ The required libraries are included in `requirements.txt`, and can be installed 
 	pip install -r requirements.txt
 ```  
 
-The project has a command line interface accessible through cli.py:  
+The project has a command line interface accessible through learn.py:  
 
 ```
-python cli.py [-h] [-r RANGE RANGE RANGE] [-m META] 
-			  [-cv CROSS] [-t TREE] [-d] [-cf] [-b] 
-			  infile
+python learn.py [-h] [-r RANGE RANGE RANGE] [-m META] 
+			    [-cv CROSS] [-t TREE] [-d] [-cf] [-b] 
+			    infile
 ```
 ### Positional Arguments
 |Name      |					Usage			|
@@ -38,18 +38,18 @@ python cli.py [-h] [-r RANGE RANGE RANGE] [-m META]
 
 1. Perform 10-fold cross validation on the iris dataset over &#951; mins of 5, 10, 15, 20 & 25:  
 ```
-    python cli.py -r 5 25 5 data/iris.csv
+    python learn.py -r 5 25 5 data/iris.csv
 ```
 
 2. Generate confusion matricies for &#951; mins of 5 10 15 over the mushroom dataset using multiway splits:  
 ```
-    python cli.py -r 5 15 5 -t categorical -cf data/mushroom.csv
+    python learn.py -r 5 15 5 -t categorical -cf data/mushroom.csv
 ```
 3. Convert the mushroom dataset to a binary dataset and perform cross validation at 1-10: 
 ```
-    python cli.py -r 1 10 1 -t categorical -b data/mushroom.csv
+    python learn.py -r 1 10 1 -t categorical -b data/mushroom.csv
 ```
 4. Regress the housing dataset using 15-fold cross validation over &#951; of 5, 10 & 15:  
 ```
-    python cli.py -r 5 15 5 -t regression -cv 15 data/housing.csv
+    python learn.py -r 5 15 5 -t regression -cv 15 data/housing.csv
 ```
