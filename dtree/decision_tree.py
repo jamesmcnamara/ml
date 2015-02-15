@@ -25,10 +25,9 @@ class DecisionTree:
             "for data and results and either parent, or eta and data_store"
         self.parent = parent
         self.data_store = data_store or parent.data_store
-        self.eta = eta or self.parent.eta
-        self.used_columns = list(parent.used_columns) if parent else []
-
         self.data, self.results = data, results
+        self.eta = len(self.data) * (eta / 100) if eta else self.parent.eta
+        self.used_columns = list(parent.used_columns) if parent else []
 
         # Stores which column this tree was split on, and possibly a function that consumes a value
         self.ColumnInfo = namedtuple("ColumnInfo", ["column", "gain", "splitter"])

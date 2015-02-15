@@ -1,17 +1,22 @@
+from collections import namedtuple
+from itertools import compress
+from math import sqrt
+from operator import eq
+
+
 import argparse
 import json
 import numpy as np
-from math import sqrt
+
 from dtree.classification_tree import EntropyTree, CategoricalEntropyTree
 from dtree.regression_tree import RegressionTree
-from collections import namedtuple
 
 __author__ = 'jamesmcnamara'
 
 tree_map = {"entropy": EntropyTree, "regression": RegressionTree, 'categorical': CategoricalEntropyTree}
 
 
-def load_data():
+def load_args():
     """
         Parses the command line arguments, and loads the arguments onto an ArgumentParser object, which it returns
     :return: an ArgumentParser object with all of the specified command line features written on
@@ -45,23 +50,28 @@ def load_data():
 class DataStore:
     def __init__(self):
         # Load data
-        parser = load_data()
+        parser = load_args()
         self.meta = json.load(parser.meta) if parser.meta \
             else json.load(open(parser.infile.name.replace(".csv", ".meta")))
         self.width, self.height, self.type = self.meta["width"], self.meta["height"], self.meta["type"]
-        self.data, self.results = self.extract(parser.infile, self.width, self.height)
+        self.data, self.results = self.extract(self.type, self.width, self.height, parser.infile)
         self.k_validation = parser.cross
         self.tree_type = tree_map[parser.tree]
         self.confusion = parser.with_confusion
         self.debug = parser.debug
+        self.start, self.stop, self.step = parser.range
 
         # Clean Data
         self.shuffle()
-        if self.tree_type != CategoricalEntropyTree:
-            self.normalize_columns()
-        elif parser.binary_splits:
+        if parser.binary_splits:
             self.data = self.binarize_columns(self.data)
             self.tree_type = tree_map["entropy"]
+
+        # Set up testing functions
+        if self.debug:
+            self.test_func = self.scikit_classifier if self.tree_type == EntropyTree else self.scikit_regressor
+        else:
+            self.test_func = self.accuracy
 
         # Reference data for classifiers
         if self.tree_type != RegressionTree:
@@ -71,25 +81,9 @@ class DataStore:
         else:
             self.results = list(map(float, self.results))
 
-        print("Completed data load, beginning cross validation")
-        # Create the decision trees
-        start, stop, step = parser.range
-        for eta_percent in range(start, stop + 1, step):
-            if self.debug:
-                test_func = self.scikit_classifier if self.tree_type == EntropyTree else self.scikit_regressor
-            else:
-                test_func = self.our_test
 
-            avg, sd = self.cross_fold_validation(eta_percent, test_func)
-
-            if self.tree_type != RegressionTree:
-                print("{}% eta gave a classification accuracy of {:.2f}% with a standard deviation of {:.2f}%"
-                      .format(eta_percent, avg * 100, sd * 100))
-            else:
-                print("{}% eta had an average MSE of {:.2f} with a standard deviation of {:.2f}%"
-                      .format(eta_percent, avg, sd))
-
-    def extract(self, file, width, height):
+    @staticmethod
+    def extract(type, width, height, file):
         """
             Extracts and loads the data from the given file into a numpy matrix and the
             results into a numpy array
@@ -97,8 +91,8 @@ class DataStore:
             last column containing the results from the training set
         :return: a tuple of the data in matrix form and an array of the result data
         """
-        transform = lambda values: list(map(float if self.type == "float" else str, values))
-        data = np.zeros((height, width - 1), self.type)
+        transform = lambda values: list(map(float if type == "float" else str, values))
+        data = np.zeros((height, width - 1), type)
         results = [""] * height
         for i, line in enumerate(file):
             *xs, y = line.split(",")
@@ -117,20 +111,25 @@ class DataStore:
         np.random.shuffle(self.results)
         np.random.seed(np.random.randint(0, 100000))
 
-    def normalize_columns(self):
+    @staticmethod
+    def normalize_columns(data):
         """
             For all columns with numeric type, normalize their values to be between [0,1]
         """
         # Helper function which maps the normalization function over a column from the input matrix
         def column_mapper(col):
             minimum, maximum = min(col), max(col)
-            return map(lambda x: (x - minimum) / (maximum - minimum), col)
+            return list(map(lambda x: (x - minimum) / (maximum - minimum), col))
+        return np.array([column_mapper(col) for col in data.T]).T
 
-        for index, norm_col in enumerate(column_mapper(col) for col in self.data.T):
-            self.data[:, index] = list(norm_col)
 
     @staticmethod
     def binarize_columns(data):
+        """
+            Consumes a matrix of categorical features and translates it into a binary matrix of
+        :param data:
+        :return:
+        """
         # Offset data container
         OffsetData = namedtuple("ColData", ["offset", "symbol_map"])
         offset, cols = 0, []
@@ -154,6 +153,25 @@ class DataStore:
             bin_data[i] = binary_row
         return bin_data
 
+    def test(self, start, stop, step, accuracy_func):
+        """
+            Consumes descriptors of various eta levels and an accuracy function and determines
+            prints messages about the average accuracy and variation across the folds
+        :param start: first eta min value to test
+        :param stop: last eta min value to test
+        :param step: strides for updating eta mins from start to stop
+        :param accuracy_func: a function which determines average accuracy k constructed tree with
+            the given eta min using cross fold validation, where k is the k validation parameter
+        """
+        for eta_percent in range(start, stop + 1, step):
+            avg, sd = self.cross_validation(eta_percent, accuracy_func)
+
+            if self.tree_type != RegressionTree:
+                print("{}% eta gave a classification accuracy of {:.2f}% with a standard deviation of {:.2f}%"
+                      .format(eta_percent, avg * 100, sd * 100))
+            else:
+                print("{}% eta had an average MSE of {:.2f} with a standard deviation of {:.2f}%"
+                      .format(eta_percent, avg, sd))
     @staticmethod
     def chunk(data, segments):
         """
@@ -161,28 +179,22 @@ class DataStore:
         """
         return list(zip(*[iter(data)] * (len(data) // segments)))
 
-    def cross_fold_validation(self, eta, test_func):
+    def cross_validation(self, eta, accuracy_func):
         """
             Splits this data set into k chunks based on the k_validation attribute, and excludes each chunk,
             one at a time, from the input data set to a decision tree, and then tests that decision tree on
             the excluded data set. The function accumulates each of the accuracy measures, and returns the
             average accuracy and the standard deviation
         :param eta: eta min for the decision trees (early stopping strategy)
-        :param test_func: a function to pass all of the relevant information too, which will append the accuracy
-            of some test to our accuracies list
+        :param accuracy_func: a function which determines average accuracy k constructed tree with
+            the given eta min using cross fold validation, where k is the k validation parameter
         :return: 2-tuple of average accuracy and standard deviation
         """
 
         data_chunks = self.chunk(self.data, self.k_validation)
         result_chunks = self.chunk(self.results, self.k_validation)
-        accuracies = []
-        for i in range(self.k_validation):
-            test_data, test_results = data_chunks.pop(i), result_chunks.pop(i)
-            test_func(len(self.data) * (eta / 100), np.concatenate(data_chunks), np.concatenate(result_chunks),
-                      test_data, test_results, accuracies)
-            data_chunks.insert(i, test_data)
-            result_chunks.insert(i, test_results)
-
+        accuracies = [self.get_ith_accuracy(data_chunks, result_chunks, eta, accuracy_func, i)
+                      for i in range(self.k_validation)]
         if self.confusion:
             print(sum(accuracies))
             return 0, 0
@@ -191,7 +203,27 @@ class DataStore:
             sd_accuracy = sqrt(sum(map(lambda acc: (acc - avg_accuracy) ** 2, accuracies)) / (self.k_validation - 1))
             return avg_accuracy, sd_accuracy
 
-    def our_test(self, eta, data_chunks, result_chunks, test_data, test_results, accuracies):
+    @staticmethod
+    def get_ith_accuracy(data_chunks, result_chunks, eta, accuracy_func, i):
+        """
+            Consumes the data, results, an accuracy function, and which iteration of the cross fold validation
+            loop where in, and runs the test function with the training data as all of the data except for the
+            ith chunk, which is reserved for the sample set
+        :param data_chunks: a list of k sub-lists of the data, where k is the cross validation parameter
+        :param result_chunks: a list of k sub-lists of the results, where k is the cross validation parameter
+        :param eta: integer corresponding to the eta min percentage
+        :param accuracy_func: a function which determines average accuracy k constructed tree with
+            the given eta min using cross fold validation, where k is the k validation parameter
+        :param i: which sub-list to omit from the training data
+        :return: accuracy of the decision tree constructed from all but the ith sub-list and the given
+            eta min parameter
+        """
+        mask_mat = [j != i for j in range(len(data_chunks))]
+        mask = lambda lists: np.concatenate(list(compress(lists, mask_mat)))
+        return accuracy_func(eta, DataStore.normalize_columns(mask(data_chunks)), mask(result_chunks),
+                             DataStore.normalize_columns(np.array(data_chunks[i])), result_chunks[i])
+
+    def accuracy(self, eta, data_chunks, result_chunks, test_data, test_results):
         """
             Uses our decision tree to test the given data
         :param eta: eta min for the tree to be built
@@ -199,12 +231,12 @@ class DataStore:
         :param result_chunks: Training data results
         :param test_data: test data
         :param test_results: results for test data
-        :param accuracies: list to add the accuracy of this test to
+        :returns: The percentage of accurate predictions
         """
         d = self.tree_type(data=data_chunks, results=result_chunks, data_store=self, eta=eta)
-        accuracies.append(d.test(test_data, test_results, with_confusion=self.confusion))
+        return d.test(test_data, test_results, with_confusion=self.confusion)
 
-    def scikit_classifier(self, eta, data_chunks, result_chunks, test_data, test_results, accuracies):
+    def scikit_classifier(self, eta, data_chunks, result_chunks, test_data, test_results):
         """
             Uses scikit learns decision tree classifier to test the given data to compare our success
         :param eta: eta min for the tree to be built
@@ -212,15 +244,14 @@ class DataStore:
         :param result_chunks: Training data results
         :param test_data: test data
         :param test_results: results for test data
-        :param accuracies: list to add the accuracy of this test to
+        :returns: The percentage of accurate predictions
         """
         from sklearn.tree import DecisionTreeClassifier
         clf = DecisionTreeClassifier(criterion="entropy", min_samples_split=eta)
-        clf.fit(data_chunks, result_chunks)
-        accuracies.append(sum(map(lambda actual, expected: actual == expected,
-                                  test_results, clf.predict(test_data))) / len(test_data))
+        clf.fit(DataStore.normalize_columns(data_chunks), result_chunks)
+        return sum(map(eq, test_results, clf.predict(test_data))) / len(test_data)
 
-    def scikit_regressor(self, eta, data_chunks, result_chunks, test_data, test_results, accuracies):
+    def scikit_regressor(self, eta, data_chunks, result_chunks, test_data, test_results):
         """
             Uses scikit learns decision tree classifier to test the given data to compare our success
         :param eta: eta min for the tree to be built
@@ -234,6 +265,10 @@ class DataStore:
         clf = DecisionTreeRegressor(min_samples_split=eta)
         clf.fit(data_chunks, result_chunks)
         predicted = clf.predict(test_data)
-        accuracies.append(RegressionTree.mean_squared_error(test_results, predicted))
+        return RegressionTree.mean_squared_error(test_results, predicted)
 
-ds = DataStore()
+
+if __name__ == "__main__":
+    ds = DataStore()
+    print("Completed data load, beginning cross validation")
+    ds.test(ds.start, ds.stop, ds.step, ds.test_func)
