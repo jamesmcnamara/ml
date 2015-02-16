@@ -1,7 +1,7 @@
 ## Learn.py
 _By James McNamara_
 
-Learn.py is a general purpose ETL and machine learning library written in python3. At the moment, it includes only various decision trees and regression tools, but development is continuing every day. Work has already begun on random forests, neural nets and support vector machines.
+Learn.py is a general purpose ETL and machine learning library written in python3. It currently only includes only various decision trees and regression tools, but development is continuing every day. Work has already begun on random forests, neural nets and support vector machines.
 
 The required libraries are included in `requirements.txt`, and can be installed with:   
 
@@ -36,20 +36,26 @@ python learn.py [-h] [-r RANGE RANGE RANGE] [-m META]
 
 ### Examples
 
-1. Perform 10-fold cross validation on the iris dataset over &#951; mins of 5, 10, 15, 20 & 25:  
+Perform 10-fold cross validation on the iris dataset over &#951; mins of 5, 10, 15, 20 & 25:  
+
 ```
     python learn.py -r 5 25 5 data/iris.csv
 ```
 
-2. Generate confusion matricies for &#951; mins of 5 10 15 over the mushroom dataset using multiway splits:  
-```
+Generate confusion matricies for &#951; mins of 5 10 15 over the mushroom dataset using multiway splits:  
+
+```  
     python learn.py -r 5 15 5 -t categorical -cf data/mushroom.csv
-```
-3. Convert the mushroom dataset to a binary dataset and perform cross validation at 1-10: 
+```  
+
+Convert the mushroom dataset to a binary dataset and perform cross validation at 1-10:   
+
 ```
     python learn.py -r 1 10 1 -t categorical -b data/mushroom.csv
-```
-4. Regress the housing dataset using 15-fold cross validation over &#951; of 5, 10 & 15:  
+```  
+
+Regress the housing dataset using 15-fold cross validation over &#951; of 5, 10 & 15:  
+
 ```
     python learn.py -r 5 15 5 -t regression -cv 15 data/housing.csv
 ```
