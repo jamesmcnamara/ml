@@ -1,6 +1,7 @@
 {
-    "name": "iris",
+    "data_type": "float",
     "height": 150,
-    "width": 5,
-    "type": "float"
+    "name": "iris",
+    "result_type": "str",
+    "width": 5
 }

@@ -1,6 +1,7 @@
 {
-    "name": "housing",
+    "data_type": "float",
     "height": 506,
-    "width": 14,
-    "type": "float"
+    "name": "housing",
+    "result_type": "float",
+    "width": 14
 }

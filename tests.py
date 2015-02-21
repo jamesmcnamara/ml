@@ -1,16 +1,16 @@
 from io import StringIO
 import json
+from math import sqrt
 
-from nose.tools import assert_equals, assert_greater
+from nose.tools import assert_equal, assert_greater, assert_almost_equal
 import numpy as np
-from mock import patch
 
-from learn import DataStore
+from learn import DecisionTreeDataStore
 __author__ = 'jamesmcnamara'
 
 
 def get_meta():
-    return StringIO(json.dumps(dict(name="iris", height=15, width=5, type="float")))
+    return StringIO(json.dumps(dict(name="iris", height=15, width=5, data_type="float", result_type="str")))
 
 
 def get_data():
@@ -33,58 +33,90 @@ def get_data():
     return StringIO("\n".join(data))
 
 
+class FakeParser:
+    pass
+
+
 class TestDataStore:
 
-    @patch("learn.load_args")
-    def setup(self, load_args_patch):
-        instance = load_args_patch.return_value
-        instance.meta = get_meta()
-        instance.infile = get_data()
-        instance.cross = 10
-        instance.tree = "entropy"
-        instance.range = (5, 25, 5)
-        instance.debug = False
-        instance.with_confusion = False
-        instance.binary_splits = False
-        self.ds = DataStore()
+    def setup(self):
+        fake_parser = FakeParser()
+        fake_parser.meta = get_meta()
+        fake_parser.infile = get_data()
+        fake_parser.cross = 10
+        fake_parser.tree = "entropy"
+        fake_parser.range = (5, 25, 5)
+        fake_parser.debug = False
+        fake_parser.with_confusion = False
+        fake_parser.binary_splits = False
+        fake_parser.normalization = "arithmetic"
+        self.ds = DecisionTreeDataStore(fake_parser)
 
-    @patch("learn.load_args")
-    def iris_setup(self, load_args_patch):
-        instance = load_args_patch.return_value
-        instance.meta = open("data/iris.meta")
-        instance.infile = open("data/iris.csv")
-        instance.cross = 10
-        instance.tree = "entropy"
-        instance.range = (5, 25, 5)
-        instance.debug = False
-        instance.with_confusion = False
-        instance.binary_splits = False
-        return DataStore()
+    def teardown(self):
+        del self.ds
+
+    def iris_setup(self):
+        fake_parser = FakeParser()
+        fake_parser.meta = open("data/iris.meta")
+        fake_parser.infile = open("data/iris.csv")
+        fake_parser.cross = 10
+        fake_parser.tree = "entropy"
+        fake_parser.range = (5, 25, 5)
+        fake_parser.debug = False
+        fake_parser.with_confusion = False
+        fake_parser.binary_splits = False
+        fake_parser.normalization = "arithmetic"
+        return DecisionTreeDataStore(fake_parser)
 
     def test_extract(self):
-        data, results = self.ds.extract(self.ds.type, self.ds.width, self.ds.height, get_data())
-        assert_equals(type(data), np.ndarray)
-        assert_equals(len(data), 15)
-        assert_equals(len(data[0]), 4)
-        assert_equals(type(data[0][0]), np.float64)
-        assert_equals(len(results), 15)
-        assert_equals(type(results[0]), str)
-        assert_equals(int(sum(sum(data))), 177)
+        data, results = self.ds.extract(self.ds.data_type, self.ds.result_type,
+                                        self.ds.width, self.ds.height, get_data())
+        assert_equal(type(data), np.ndarray)
+        assert_equal(len(data), 15)
+        assert_equal(len(data[0]), 4)
+        assert_equal(type(data[0][0]), np.float64)
+        assert_equal(len(results), 15)
+        assert_equal(type(results[0]), str)
+        assert_equal(int(sum(sum(data))), 177)
 
-    def test_normalize(self):
-        data = self.ds.normalize_columns(self.ds.data)
+    def test_normalize_arithmetic(self):
+        data = self.ds.normalize_columns_arithmetic(self.ds.data)
         for column in data.T:
-            assert_equals(max(column), 1)
-            assert_equals(min(column), 0)
+            assert_equal(max(column), 1)
+            assert_equal(min(column), 0)
+        first_col = self.ds.data[:, 0]
+        first_col_norm = data[:, 0]
+        top, bot = max(first_col), min(first_col)
+        for orig, norm in zip(first_col, first_col_norm):
+            assert_equal((orig - bot) / (top - bot), norm)
+
+    def test_normalize_z(self):
+        ds = self.iris_setup()
+        data = ds.normalize_columns_z(ds.data)
+        for column in data.T:
+            avg = sum(column) / len(column)
+            sd = sqrt(sum(map(lambda elem: (elem - avg) ** 2, column)) / (len(column) - 1))
+            assert_almost_equal(avg, 0)
+            assert_almost_equal(sd, 1)
+
+    def test_normalize_z_validation(self):
+        training = np.array([[i % 2 for i in range(100)], [i % 4 for i in range(100)]]).T
+        normed_ones = DecisionTreeDataStore.normalize_columns_z_validation(training, np.array([[1 for _ in range(10)],
+                                                                                               [2 for _ in range(10)]]).T)
+        for row in normed_ones.T:
+            one, two = row
+            assert_almost_equal(one, 1, delta=0.1)
+            assert_almost_equal(two, 0.5, delta=0.1)
 
     def test_cross_validation(self):
-        self.ds = self.iris_setup()
+        ds = self.iris_setup()
         for eta in range(5, 26, 5):
-            avg, sd = self.ds.cross_validation(5, self.ds.accuracy)
+            accuracies = ds.cross_validation(ds.accuracy, eta)
+            avg = sum(accuracies) / len(accuracies)
+            sd = DecisionTreeDataStore.sample_sd(accuracies)
             assert_greater(avg, 0.85)
             assert_greater(1, avg)
             assert_greater(0.15, sd)
             assert_greater(sd, 0)
-
 
 
