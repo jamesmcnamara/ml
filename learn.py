@@ -1,6 +1,7 @@
 from abc import ABCMeta, abstractmethod
 from collections import namedtuple
 from itertools import compress
+from functools import reduce
 from math import sqrt
 from operator import eq
 from os.path import basename
@@ -45,13 +46,16 @@ def load_args():
     parser.add_argument("-d", "--debug", action="store_true", default=False,
                         help="Use sci-kit learn instead of learn.py, to test that the behavior is correct")
 
+    parser.add_argument("-cv", "--cross", type=int, default=10,
+                        help="Set the parameter for k-fold cross validation. Default 10")
+
+    parser.add_argument("-v", "--validation", type=open,
+                        help="Separate validation set to use instead of cross-fold")
+
     # Decision Tree options
     parser.add_argument("-r", "--range", type=int, nargs=3,
                         help="Range of eta values to use for cross validation. The first "
                              "value is start, the second is end, and the last is interval")
-
-    parser.add_argument("-cv", "--cross", type=int, default=10,
-                        help="Set the parameter for k-fold cross validation. Default 10")
 
     parser.add_argument("-t", "--tree", type=str, default="entropy",
                         help="What type of decision tree to build for the data. Options are "
@@ -67,10 +71,17 @@ def load_args():
     parser.add_argument("-reg", "--regression", action="store_true", default=False,
                         help="Develop a linear model using regression for the given data set")
 
+    parser.add_argument("-pw", "--powers", type=int, default=1,
+                        help="Pad out the data set with powers of the input sets")
+
     parser.add_argument("-gd", "--gradient-descent", action="store_true", default=False,
                         help="Use gradient descent to regress the given matrix")
 
     parser.add_argument("-pr", "--plot-rmse", action="store_true", default=False,
+                        help="Display a graph showing the iterative root mean squared error "
+                             "of each iteration of the gradient descent")
+
+    parser.add_argument("-pp", "--plot-powers", action="store_true", default=False,
                         help="Display a graph showing the iterative root mean squared error "
                              "of each iteration of the gradient descent")
 
@@ -112,15 +123,29 @@ class DataStore:
         # Load data
         self.meta = json.load(parser.meta) if parser.meta \
             else json.load(open(parser.infile.name.replace(".csv", ".meta")))
+
         self.width, self.height, self.data_type, self.result_type = \
             self.meta["width"], self.meta["height"], self.meta["data_type"], self.meta["result_type"]
 
+        # ETL Data
         self.data, self.results = self.extract(self.data_type, self.result_type, self.width, self.height, parser.infile)
-        self.k_validation = parser.cross
+        if parser.validation:
+            validation_meta = json.load(open(parser.validation.name.replace("Train", "Validation").replace(".csv", ".meta")))
+            self.validation_data, self.validation_results = \
+                self.extract(validation_meta["data_type"], validation_meta["result_type"],
+                             validation_meta["width"], validation_meta["height"], parser.validation)
 
+        # Number of folds to perform cross validation on
+        self.k_validation = parser.cross if parser.cross != 1 else len(self.data)
+
+        # Whether or not to use built in libraries to test the algorithms
         self.debug = parser.debug
 
+        # Normalization method to use
         self.normalization = parser.normalization
+
+        # Number of powers to pad out the dataset
+        self.powers = parser.powers
 
         # Clean Data
         self.shuffle()
@@ -135,7 +160,7 @@ class DataStore:
         """
         raise NotImplementedError("Each subclass of DataStore must implement a test method")
 
-    def cross_validation(self, accuracy_func, *args):
+    def cross_validation(self, accuracy_func, data, results, k_validation, *args, **kwargs):
         """
             Splits this data set into k chunks based on the k_validation attribute, and excludes each chunk,
             one at a time, from the input data set to a decision tree, and then tests that decision tree on
@@ -147,12 +172,12 @@ class DataStore:
         :return: A list of accuracies across the folds
         """
 
-        data_chunks = self.chunk(self.data, self.k_validation)
-        result_chunks = self.chunk(self.results, self.k_validation)
-        return [self.get_ith_accuracy(data_chunks, result_chunks, accuracy_func, i, *args)
+        data_chunks = self.chunk(data, k_validation)
+        result_chunks = self.chunk(results, k_validation)
+        return [self.get_ith_accuracy(data_chunks, result_chunks, accuracy_func, i, *args, **kwargs)
                 for i in range(self.k_validation)]
 
-    def get_ith_accuracy(self, data_chunks, result_chunks, accuracy_func, i, *args):
+    def get_ith_accuracy(self, data_chunks, result_chunks, accuracy_func, i, *args, **kwargs):
         """
             Consumes the data, results, an accuracy function, and which iteration of the cross fold validation
             loop where in, and runs the test function with the training data as all of the data except for the
@@ -170,7 +195,7 @@ class DataStore:
         mask = lambda lists: np.concatenate(list(compress(lists, mask_mat)))
         return accuracy_func(self.normalize_columns(mask(data_chunks)), mask(result_chunks),
                              self.normalize_validation(mask(data_chunks), np.array(data_chunks[i])),
-                             result_chunks[i], *args)
+                             result_chunks[i], *args, **kwargs)
 
 
     @staticmethod
@@ -191,6 +216,23 @@ class DataStore:
             data[i] = transform(xs)
             results[i] = result_trans(y.strip("\n"))
         return data, results
+
+    @staticmethod
+    def add_powers(data, power):
+        """
+            Consumes a data set, and adds columns for every power up to power
+        :param data:
+        :param power:
+        :return:
+        """
+        exp = lambda p: lambda x: x ** p
+        h, w = data.shape
+        mat = np.zeros((h, w * power), data.dtype)
+        for i, input_column in enumerate(data.T):
+            for j in range(power):
+                jth_power = exp(j + 1)
+                mat.T[w * j + i] = list(map(jth_power, input_column))
+        return mat
 
     def shuffle(self):
         """
@@ -260,7 +302,8 @@ class DataStore:
             mu = sum(training_col) / len(training_col)
             sigma = DataStore.sample_sd(training_col)
             return list(map(lambda x: (x - mu) / sigma, validation_col))
-        return np.array([column_mapper(training, validation) for training, validation in zip(training.T, validation.T)]).T
+        return np.array([column_mapper(training, validation)
+                         for training, validation in zip(training.T, validation.T)]).T
 
     @staticmethod
     def chunk(data, segments):
@@ -346,7 +389,7 @@ class DecisionTreeDataStore(DataStore):
             the given eta min using cross fold validation, where k is the k validation parameter
         """
         for eta_percent in range(start, stop + 1, step):
-            accuracies = self.cross_validation(eta_percent, accuracy_func)
+            accuracies = self.cross_validation(accuracy_func, self.data, self.results, self.k_validation, eta_percent)
             if self.confusion:
                 print(sum(accuracies))
             else:
@@ -420,11 +463,12 @@ class RegressionDataStore(DataStore):
         self.test_func = self.accuracy
 
     def test(self, accuracy_func, *args):
-        accuracies = self.cross_validation(accuracy_func)
+        accuracies = self.cross_validation(accuracy_func, self.data, self.results, self.k_validation)
         avg = sum(accuracies) / len(accuracies)
         sd = self.sample_sd(accuracies)
+        return avg, sd
 
-    def accuracy(self, training_data, training_results, test_data, test_results):
+    def accuracy(self, training_data, training_results, test_data, test_results, **kwargs):
         """
             Uses our decision tree to test the given data
         :param data_chunks: Training data
@@ -434,12 +478,31 @@ class RegressionDataStore(DataStore):
         :returns: The percentage of accurate predictions
         """
         r = Regressor(training_data, training_results, self)
-        if self.collect_rmse:
-            plt.plot(range(len(r.rmses)), r.rmses, 'ro')
-            plt.ylabel("Root Mean Squared Error")
-            plt.xlabel("Iterations")
-            plt.show()
+        # if self.collect_rmse:
+        #     plt.plot(range(len(r.rmses)), r.rmses, 'ro')
+        #     plt.axis([0, len(r.rmses), 0, max(r.rmses)])
+        #     plt.ylabel("Root Mean Squared Error")
+        #     plt.xlabel("Iterations")
+        #     plt.show()
+        # if "tuple" in kwargs and kwargs["tuple"]:
+        #     return rmse(r.predict(training_data), training_results), rmse(r.predict(test_data), test_results)
         return rmse(r.predict(test_data), test_results)
+
+    # def plot_powers(self):
+    #     training_avgs, test_avgs = [], []
+    #     for power in range(1, self.powers):
+    #         poly_data = self.add_powers(self.data, power)
+    #         accuracies = self.cross_validation(self.accuracy, poly_data, self.results, self.k_validation, tuple=True)
+    #         training_accuracies, test_accuracies = zip(*accuracies)
+    #         training_avgs.append(sum(training_accuracies) / len(training_accuracies))
+    #         test_avgs.append(sum(test_accuracies) / len(test_accuracies))
+    #     plt.plot(range(1, self.powers), training_avgs, "ro")
+    #     plt.plot(range(1, self.powers), test_avgs, "bo")
+    #     plt.axis([0, self.powers, 0, max(test_avgs)])
+    #     plt.ylabel("Root Mean Squared Error")
+    #     plt.xlabel("Degree")
+    #     plt.show()
+
 
 if __name__ == "__main__":
     parser = load_args()
@@ -447,7 +510,9 @@ if __name__ == "__main__":
         generate_meta(parser.infile)
     elif parser.regression:
         ds = RegressionDataStore(parser)
-        ds.test(ds.test_func)
+        # if parser.plot_powers:
+        #     ds.plot_powers()
+        print("Average was: {}, Standard deviation was {}".format(*ds.test(ds.test_func)))
     else:
         ds = DecisionTreeDataStore(parser)
         ds.test(ds.test_func, ds.start, ds.stop, ds.step)

@@ -6,7 +6,7 @@ import numpy as np
 
 
 def rmse(design, ws, ys):
-    return sqrt(sum((np.dot(ws, row) - y)**2 for row, y in zip(design, ys)) / len(design))
+    return sqrt(sum((np.dot(ws, row) - y) ** 2 for row, y in zip(design, ys)) / len(design))
 
 
 class Regressor:
@@ -40,7 +40,9 @@ class Regressor:
         """
         step, tolerance, iterations = step or self.step, tolerance or self.tolerance, iterations or self.iterations
         counter = count()
-        while next(counter) < iterations and rmse(design, ws, ys) > tolerance:
+        last_rmse = 0
+        while next(counter) < iterations and abs(last_rmse - rmse(design, ws, ys)) > tolerance:
+            last_rmse = rmse(design, ws, ys)
             ws -= step * self.gradient(design, ws, ys)
             if self.collect_rmse:
                 self.rmses.append(rmse(design, ws, ys))

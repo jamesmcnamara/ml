@@ -50,6 +50,8 @@ class TestDataStore:
         fake_parser.with_confusion = False
         fake_parser.binary_splits = False
         fake_parser.normalization = "arithmetic"
+        fake_parser.validation = None
+        fake_parser.powers = None
         self.ds = DecisionTreeDataStore(fake_parser)
 
     def teardown(self):
@@ -66,6 +68,8 @@ class TestDataStore:
         fake_parser.with_confusion = False
         fake_parser.binary_splits = False
         fake_parser.normalization = "arithmetic"
+        fake_parser.validation = None
+        fake_parser.powers = None
         return DecisionTreeDataStore(fake_parser)
 
     def test_extract(self):
@@ -103,7 +107,7 @@ class TestDataStore:
         training = np.array([[i % 2 for i in range(100)], [i % 4 for i in range(100)]]).T
         normed_ones = DecisionTreeDataStore.normalize_columns_z_validation(training, np.array([[1 for _ in range(10)],
                                                                                                [2 for _ in range(10)]]).T)
-        for row in normed_ones.T:
+        for row in normed_ones:
             one, two = row
             assert_almost_equal(one, 1, delta=0.1)
             assert_almost_equal(two, 0.5, delta=0.1)
@@ -111,12 +115,28 @@ class TestDataStore:
     def test_cross_validation(self):
         ds = self.iris_setup()
         for eta in range(5, 26, 5):
-            accuracies = ds.cross_validation(ds.accuracy, eta)
+            accuracies = ds.cross_validation(ds.accuracy, ds.data, ds.results, ds.k_validation, eta)
             avg = sum(accuracies) / len(accuracies)
             sd = DecisionTreeDataStore.sample_sd(accuracies)
-            assert_greater(avg, 0.85)
+            assert_greater(avg, 0.80)
             assert_greater(1, avg)
             assert_greater(0.15, sd)
             assert_greater(sd, 0)
 
+    def test_add_powers(self):
+        data = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
+        output = self.ds.add_powers(data, 2)
+
+        squared = np.array([[1, 2, 3, 1, 4, 9], [4, 5, 6, 16, 25, 36], [7, 8, 9, 49, 64, 81]])
+        for out_row, expected_row in zip(output, squared):
+            for out_val, expected_val in zip(out_row, expected_row):
+                assert_equal(out_val, expected_val)
+
+        data = np.array([[2, 3], [3, 4]])
+        output = self.ds.add_powers(data, 3)
+        cubed = np.array([[2, 3, 4, 9, 8, 27], [3, 4, 9, 16, 27, 64]])
+
+        for out_row, expected_row in zip(output, cubed):
+            for out_val, expected_val in zip(out_row, expected_row):
+                assert_equal(out_val, expected_val)
 
