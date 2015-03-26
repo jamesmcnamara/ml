@@ -51,7 +51,7 @@ class TestDataStore:
         fake_parser.binary_splits = False
         fake_parser.normalization = "arithmetic"
         fake_parser.validation = None
-        fake_parser.powers = None
+        fake_parser.powers = 1
         self.ds = DecisionTreeDataStore(fake_parser)
 
     def teardown(self):
@@ -122,6 +122,11 @@ class TestDataStore:
             assert_greater(1, avg)
             assert_greater(0.15, sd)
             assert_greater(sd, 0)
+
+    def test_center(self):
+        centered = self.ds.center_columns(self.ds.data)
+        for cdata in centered:
+            assert_almost_equal(sum(cdata) / len(cdata), 0, delta=0.01)
 
     def test_add_powers(self):
         data = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])

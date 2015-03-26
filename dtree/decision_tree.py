@@ -3,7 +3,6 @@ from math import log2
 from abc import ABCMeta, abstractmethod
 from collections import namedtuple, defaultdict, Counter
 
-
 def lg(num):
     """
         Binary log of input, with the exception that lg(0) is 0
@@ -128,12 +127,11 @@ class DecisionTree:
 
 
     @abstractmethod
-    def test(self, data, results, with_confusion=False):
+    def predict(self, data):
         """
-            Returns a measure of the accuracy of classifying the observation in data using this tree
+            Returns a stream of classifications of the given observations in data using this tree
         :param data: observations that this tree was not trained on
-        :param results: the related results
-        :return: Some measure of the accuracy
+        :return: stream of classifications
         """
         raise NotImplementedError("Concrete subclasses of decision tree must "
                                   "implement their own testing method")
@@ -173,7 +171,9 @@ class BinaryTree(DecisionTree):
             into the left or right sub tree
         """
         left, left_results, right, right_results = [], [], [], []
-
+        if splitter is None:
+            import code
+            code.interact(local=locals())
         # Create right and left data sets by using the splitter to split on column
         for i, (row, result) in enumerate(zip(self.data, self.results)):
             if splitter(row[column]):
@@ -317,23 +317,13 @@ class EntropyMixin(DecisionTree):
         [(most_common_class, _)] = Counter(self.results).most_common(1)
         return most_common_class
 
-    def test(self, data, results, with_confusion=False):
+    def predict(self, data):
         """
-            Consumes test observations and their results and returns the percentage of entries that this tree
-            classified correctly
+            Consumes test observations classifies them based on the heuristics of this tree
         :param data: matrix of observational data that the tree was not trained on
-        :param results: array of resulting data, with the indices matching the rows of data
-        :return: percent of entries that were correctly classified
+        :return: vector of classifications
         """
-        if with_confusion:
-            confusion = np.zeros((len(self.data_store.result_types), len(self.data_store.result_types)))
-            for row, result in zip(data, results):
-                classification = self.classify(row)
-                confusion[result, classification] += 1
-            print(self.data_store.result_map)
-            return confusion
-        else:
-            return sum(map(lambda actual, expected: actual == expected, results, map(self.classify, data))) / len(data)
+        return map(self.classify, data)
 
     @abstractmethod
     def classify(self, observation):
@@ -344,56 +334,3 @@ class EntropyMixin(DecisionTree):
         """
         raise NotImplementedError("EntropyTrees must implement a classify method "
                                   "that applies a prediction to an observation")
-
-
-class CategoricalEntropyTree(CategoricalTree, EntropyMixin):
-    def classify(self, observation):
-        """
-            Consumes an observation and outputs the classification that this tree would apply to the row
-        :param observation: a row of observational data
-        :return: the label that would be applied to the given row
-        """
-        if self.split_on.column != -1:
-            return self.children[observation[self.split_on.column]].classify(observation)
-        else:
-            return self.classification
-
-    def __str__(self):
-        return super().__str__()
-
-
-class EntropyTree(BinaryTree, EntropyMixin):
-    def classify(self, row):
-        """
-            Consumes an observation returns the classification of that observation via this tree and if this tree is a leaf,
-            determines 1 if this observation was classified correctly else 0
-            else uses this trees splitter to determine which sub-tree to delegate to, and then returns whether
-            the subtree correctly classified the node
-        :param row_and_result: a 2-tuple of observational data (1D array) and the result for that observation
-        :return: 1 if this tree correctly classified the input else 0
-        """
-        if self.split_on.splitter:
-            if self.split_on.splitter(row[self.split_on.column]):
-                return self.left.classify(row)
-            else:
-                return self.right.classify(row)
-        else:
-            return self.classification
-
-    def __str__(self):
-        """
-            OVERRIDE: str(self) returns a pretty printed version of the tree
-        """
-        offset = "\n" + "\t" * self.depth()
-        s = "{off}Total Entries: {len},{off}Entropy: {ent:.3f}"\
-            .format(off=offset, len=len(self), ent=self.measure_function(self.results), col=self.split_on.column)
-        s += ",{off}Split on column: {col}".format(off=offset, col=self.split_on.column) if self.split_on.column != -1\
-            else ""
-
-        for branch, branch_name in [(self.left, "Left"), (self.right, "Right")]:
-            if branch:
-                s += "{off}__________________________{off}{name}:{branch}"\
-                    .format(off=offset, name=branch_name, branch=str(branch))
-        return s
-
-

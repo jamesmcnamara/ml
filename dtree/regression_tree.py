@@ -58,15 +58,13 @@ class RegressionTree(BinaryTree):
         """
         return sum(self.results) / len(self.results)
 
-    def test(self, data, results, with_confusion=False):
+    def predict(self, data):
         """
-            Consumes test observations and their results and returns the mean
-            squared error obtained by classifying the data with this tree
+            Consumes test observations returns a stream of predictions
         :param data: matrix of observational data
-        :param results: array of resulting data, with the indices matching the rows of data
-        :return: mean squared error obtained by classifying the data with this tree
+        :return: a stream of predictions
         """
-        return self.mean_squared_error(results, (self.regress(row) for row in data))
+        return map(self.regress, data)
 
     def regress(self, row):
         """
