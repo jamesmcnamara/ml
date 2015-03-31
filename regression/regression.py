@@ -5,12 +5,8 @@ from math import sqrt
 import numpy as np
 
 
-def rmse(design, ws, ys):
-    return sqrt(sum((np.dot(ws, row) - y) ** 2 for row, y in zip(design, ys)) / len(design))
-
-
 class Regressor:
-    def __init__(self, design, ys, datastore):
+    def __init__(self, design, ys, datastore, **kwargs):
         self.design = self.pad(design)
         self.ys = ys
 
@@ -23,6 +19,8 @@ class Regressor:
             self.collect_rmse = datastore.collect_rmse
             self.rmses = []
             self.ws = self.gradient_descent(self.design, self.ys, self.ws)
+        elif "ridge" in kwargs:
+            self.ws = self.ridge_regression(self.design, self.ys, kwargs["ridge"])
         else:
             self.ws = self.normal_equations(self.design, ys)
 
@@ -40,12 +38,12 @@ class Regressor:
         """
         step, tolerance, iterations = step or self.step, tolerance or self.tolerance, iterations or self.iterations
         counter = count()
-        last_rmse = 0
-        while next(counter) < iterations and abs(last_rmse - rmse(design, ws, ys)) > tolerance:
-            last_rmse = rmse(design, ws, ys)
+        last_rmse = tolerance
+        while next(counter) < iterations and last_rmse - self.rmse(design, ws, ys) > tolerance:
+            last_rmse = self.rmse(design, ws, ys)
             ws -= step * self.gradient(design, ws, ys)
             if self.collect_rmse:
-                self.rmses.append(rmse(design, ws, ys))
+                self.rmses.append(self.rmse(design, ws, ys))
         return ws
 
     @staticmethod
@@ -91,3 +89,27 @@ class Regressor:
         :return: optimal weight vector
         """
         return np.dot(np.dot(np.linalg.inv(np.dot(design.T, design)), design.T), ys)
+
+    @staticmethod
+    def ridge_regression(design, ys, lmbda):
+        """
+            Uses the hat matrix to determine the optimal regression vector
+        :param design: Design matrix
+        :param ys: outputs
+        :return: optimal weight vector
+        """
+        return np.dot(np.dot(np.linalg.inv(np.dot(design.T, design) + lmbda * np.eye(len(design.T))), design.T), ys)
+
+
+    @staticmethod
+    def rmse(design, ws, ys):
+        """
+            Calculates the root mean squared error obtained by using the given ws vector to
+            regress the design matrix with ys as the actual observed values
+        :param design: Design Matrix (N*M)
+        :param ws: weight prediction vector (M*1)
+        :param ys: observed results (N*1)
+        :return: Root mean squared error (scalar)
+        """
+        return sqrt(sum((np.dot(ws, row) - y) ** 2 for row, y in zip(design, ys)) / len(design))
+
