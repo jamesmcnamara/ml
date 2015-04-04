@@ -3,6 +3,7 @@ from math import log2
 from abc import ABCMeta, abstractmethod
 from collections import namedtuple, defaultdict, Counter
 
+
 def lg(num):
     """
         Binary log of input, with the exception that lg(0) is 0
@@ -16,26 +17,24 @@ class DecisionTree:
 
     __metaclass__ = ABCMeta
 
-    def __init__(self, data_store=None, eta=0, data=None, results=None, parent=None):
-        exists = lambda *l: all(map(lambda element: element is not None and element is not 0, l))
-
-        assert exists(data, results, parent) or exists(data_store, results, data, eta), \
-            "To construct a DecisionTree, you must either pass in keyword arguments " \
-            "for data and results and either parent, or eta and data_store"
+    def __init__(self, result_types=None, eta=0, data=None, results=None, parent=None):
         self.parent = parent
-        self.data_store = data_store or parent.data_store
         self.data, self.results = data, results
+        self.result_types = result_types or parent.result_types
         self.eta = len(self.data) * (eta / 100) if eta else self.parent.eta
         self.used_columns = list(parent.used_columns) if parent else []
 
-        # Stores which column this tree was split on, and possibly a function that consumes a value
-        self.ColumnInfo = namedtuple("ColumnInfo", ["column", "gain", "splitter"])
+        # Stores which column this tree was split on,
+        # and possibly a function that consumes a value
+        self.ColumnInfo = namedtuple("ColInfo", ["column", "gain", "splitter"])
         self.split_on = self.ColumnInfo(-1, -1, None)
 
-        # If the number of nodes in this tree is above the eta min, the measure function is non-zero,
+        # If the number of nodes in this tree is above the eta min,
+        # the measure function is non-zero,
         # and not all columns have been used, split this tree
-        if len(self.data) >= self.eta and self.measure_function(self.results) \
-                and len(self.used_columns) < len(self.data.T):
+        if (len(self.data) >= self.eta and
+                self.measure_function(self.results) and
+                len(self.used_columns) < len(self.data.T)):
             self.split()
             self.classification = None
         else:
@@ -88,6 +87,7 @@ class DecisionTree:
         raise NotImplementedError("The DecisionTree is only a scaffolding class. It must be "
                                   "sub-classed and the 'measure_function' method must be "
                                   "implemented. See EntropyTree, and RegressionTree for examples")
+
     @abstractmethod
     def partition(self, **kwargs):
         """
@@ -171,9 +171,6 @@ class BinaryTree(DecisionTree):
             into the left or right sub tree
         """
         left, left_results, right, right_results = [], [], [], []
-        if splitter is None:
-            import code
-            code.interact(local=locals())
         # Create right and left data sets by using the splitter to split on column
         for i, (row, result) in enumerate(zip(self.data, self.results)):
             if splitter(row[column]):
@@ -301,7 +298,7 @@ class EntropyMixin(DecisionTree):
         :param results: A 1D array of classifications
         :return: float representing entropy of input set
         """
-        result_dist = [0] * len(self.data_store.result_types)
+        result_dist = [0] * len(self.result_types)
         element_count = len(results)
 
         for result in results:

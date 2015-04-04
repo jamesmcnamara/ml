@@ -2,5 +2,6 @@
     "name": "spambase",
     "height": 4601,
     "width": 58,
-    "type": "float"
+    "data_type": "float",
+    "result_type": "float"
 }
