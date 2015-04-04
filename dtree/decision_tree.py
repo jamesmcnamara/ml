@@ -29,8 +29,20 @@ class DecisionTree:
         self.ColumnInfo = namedtuple("ColInfo", ["column", "gain", "splitter"])
         self.split_on = self.ColumnInfo(-1, -1, None)
 
-        # If the number of nodes in this tree is above the eta min,
-        # the measure function is non-zero,
+        self.parent = parent
+        self.data, self.results = data, results
+        self.result_types = result_types or parent.result_types
+        self.eta = len(self.data) * (eta / 100) if eta else self.parent.eta
+        self.used_columns = list(parent.used_columns) if parent else []
+
+        # Stores which column this tree was split on, and possibly a function
+        # that consumes a value
+        self.ColumnInfo = namedtuple("ColumnInfo",
+                                     ["column", "gain", "splitter"])
+        self.split_on = self.ColumnInfo(-1, -1, None)
+
+        # If the number of nodes in this tree is above the eta min, the
+        # measure function is non-zero,
         # and not all columns have been used, split this tree
         if (len(self.data) >= self.eta and
                 self.measure_function(self.results) and
@@ -55,9 +67,11 @@ class DecisionTree:
 
     def best_attr(self, data, results):
         """
-            Determines the best column to split the input matrix on, and returns the column index and splitter function
+            Determines the best column to split the input matrix on, and
+            returns the column index and splitter function
         :param data: input matrix
-        :param results: the classifications that correspond to the rows of the input matrix data
+        :param results: the classifications that correspond to the rows of the
+            input matrix data
         :return: a ColumnInfo tuple
         """
 
@@ -69,30 +83,37 @@ class DecisionTree:
 
     def measure_gain(self, results, *partitions):
         """
-            Determines how much would be gained on the measure function by splitting results into partitions
+            Determines how much would be gained on the measure function by
+            splitting results into partitions
         :param results: a 1D dimension of results
-        :param partitions: an arbitrary number of partitions that the results are being split into
+        :param partitions: an arbitrary number of partitions that the results
+            are being split into
         :return: total reduction in the measure function
         """
-        return self.measure_function(results) - sum(len(partition) / len(results) * self.measure_function(partition)
-                                                    for partition in partitions)
+        return (self.measure_function(results) -
+                sum((len(partition) / len(results) *
+                     self.measure_function(partition))
+                    for partition in partitions))
 
     @abstractmethod
     def measure_function(self, results):
         """
-            ABSTRACT: consumes a results array and outputs some custom measure functions value
+            ABSTRACT: consumes a results array and outputs some custom measure
+            functions value
         :param results: The results for this node
-        :return: Float corresponding to the measure derived from the results data
+        :return: Float corresponding to the measure derived from the results
+            data
         """
-        raise NotImplementedError("The DecisionTree is only a scaffolding class. It must be "
-                                  "sub-classed and the 'measure_function' method must be "
-                                  "implemented. See EntropyTree, and RegressionTree for examples")
-
+        raise NotImplementedError("The DecisionTree is only a scaffolding "
+                                  "class. It must be sub-classed and the "
+                                  "'measure_function' method must be "
+                                  "implemented. See EntropyTree, and "
+                                  "RegressionTree for examples")
     @abstractmethod
     def partition(self, **kwargs):
         """
-            Partitions this tree based on the named tuple arguments handed in through kwargs
-            possible parameters include:
+            Partitions this tree based on the named tuple arguments handed in
+            through kwargs possible parameters include:
             column: column to partition on
             splitter: function to use to split the given column
             gain: total gain passed in
@@ -104,12 +125,14 @@ class DecisionTree:
     @abstractmethod
     def best_split(self, col_index, column, results):
         """
-            Consumes a column and associated data, and returns the best gain achievable from splitting on that column
-            and optionally a splitter function that can be used to split the data
+            Consumes a column and associated data, and returns the best gain
+            achievable from splitting on that column and optionally a splitter
+            function that can be used to split the data
         :param col_index: the index of the given column
         :param column: 1D array of observations
         :param results: corresponding results
-        :return: ColumnInfo tuple holding the best gain achievable on this column (float), this column index,
+        :return: ColumnInfo tuple holding the best gain achievable on this
+            column (float), this column index,
          and possibly a splitter for it (function)
         """
         raise NotImplementedError("Concrete subclasses of decision tree must "
@@ -123,13 +146,15 @@ class DecisionTree:
         :return: the value for nodes in this tree
         """
         raise NotImplementedError("Concrete subclasses of decision tree must "
-                                  "implement their own leaf classification method")
+                                  "implement their own leaf classification "
+                                  "method")
 
 
     @abstractmethod
     def predict(self, data):
         """
-            Returns a stream of classifications of the given observations in data using this tree
+            Returns a stream of classifications of the given observations in
+            data using this tree
         :param data: observations that this tree was not trained on
         :return: stream of classifications
         """
@@ -140,7 +165,10 @@ class DecisionTree:
         """
             Determine how deep in the tree we are
         """
-        return self.parent.depth(initial_count=initial_count + 1) if self.parent else initial_count
+        if self.parent:
+            return self.parent.depth(initial_count = initial_count + 1)
+        else:
+            return initial_count
 
     def __len__(self):
         """
@@ -165,10 +193,11 @@ class BinaryTree(DecisionTree):
 
     def partition(self, column=-1, splitter=None, **kwargs):
         """
-            Partitions this data set into a left and right section based on the given column index
+            Partitions this data set into a left and right section based on
+            the given column index
         :param column: index of the column to split on
-        :param splitter: a function that consumes a value of the column, and returns whether it goes
-            into the left or right sub tree
+        :param splitter: a function that consumes a value of the column, and
+            returns whether it goes into the left or right sub tree
         """
         left, left_results, right, right_results = [], [], [], []
         # Create right and left data sets by using the splitter to split on column
@@ -182,34 +211,48 @@ class BinaryTree(DecisionTree):
         left, right = np.array(left), np.array(right)
 
         # Create right and left children of the same type as this class
-        self.left = self.__class__(data=left, results=left_results, parent=self)
-        self.right = self.__class__(data=right, results=right_results, parent=self)
+        self.left = self.__class__(data=left, results=left_results,
+                                   parent=self)
+        self.right = self.__class__(data=right, results=right_results,
+                                    parent=self)
 
     def best_split(self, col_index, column, results):
         """
-            Iterates over every interval of attr, calculating the information gain based on partitioning at that
-            interval, eventually returning the maximum information gain obtainable by partitioning on attr, and the
-            corresponding splitter
+            Iterates over every interval of attr, calculating the information
+            gain based on partitioning at that interval, eventually returning
+            the maximum information gain obtainable by partitioning on attr,
+            and the corresponding splitter
         :param column: The column of attribute data to split results on
         :param results: The corresponding results to be split
-        :return: namedtuple of float measuring maximum information gain obtainable by partitioning on attr, and the
-            corresponding splitter function
+        :return: namedtuple of float measuring maximum information gain
+            obtainable by partitioning on attr, and the corresponding splitter
+            function
         """
         splitter = lambda interval: lambda x: x <= interval
-        gain = {self.gain(column, results, splitter(interval)): splitter(interval)
-                for interval in sorted(set(column))[:-1]}
-        return self.ColumnInfo(column=col_index, gain=max(gain), splitter=gain[max(gain)]) \
-            if gain else self.ColumnInfo(column=col_index, gain=-1, splitter=None)
+        gain = {
+            self.gain(column, results, splitter(interval)): splitter(interval)
+            for interval in sorted(set(column))[:-1]
+        }
+
+        if gain:
+            return self.ColumnInfo(column=col_index, gain=max(gain),
+                                   splitter=gain[max(gain)])
+        else:
+            return self.ColumnInfo(column=col_index, gain=-1, splitter=None)
 
     def gain(self, attr, results, bin_splitter):
         """
-            Measures the expected gain as measured by the trees gain_function by splitting the results set on attr
-            via bin_splitter
-        :param attr: 1D array of attr values corresponding to the entries in results
-        :param results: 1D array of classifications, with i-th classification having attribute attr[i]
-        :param bin_splitter: a function that consumes an instance of the attr array and outputs a boolean indicating
-            which partition to categorize the classification
-        :return: Float corresponding to the gain derived from partitioning on attr with bin_splitter
+            Measures the expected gain as measured by the trees gain_function
+            by splitting the results set on attr via bin_splitter
+        :param attr: 1D array of attr values corresponding to the entries in
+            results
+        :param results: 1D array of classifications, with i-th classification
+            having attribute attr[i]
+        :param bin_splitter: a function that consumes an instance of the attr
+            array and outputs a boolean indicating which partition to
+            categorize the classification
+        :return: Float corresponding to the gain derived from partitioning on
+            attr with bin_splitter
         """
         add_elements_if = lambda val: [result for element, result in zip(attr, results) if bin_splitter(element) == val]
 
@@ -232,11 +275,12 @@ class BinaryTree(DecisionTree):
 
     def __getitem__(self, item):
         """
-            OVERRIDE: supports indexing by arbitrary strings of 'l' and 'r' to return a corresponding subtree
-            evaluated from left-to-right.
+            OVERRIDE: supports indexing by arbitrary strings of 'l' and 'r' to
+            return a corresponding subtree evaluated from left-to-right.
             e.g. self["llr"] returns the self.left.left.right
         """
-        assert item.count("l") + item.count("r") == len(item), "Indexing must include only 'l' and 'r' characters"
+        assert item.count("l") + item.count("r") == len(item),
+               "Indexing must include only 'l' and 'r' characters"
         if len(item) == 1:
             return self.left if item == "l" else self.right
 
@@ -263,28 +307,38 @@ class CategoricalTree(DecisionTree):
         symbol_to_data = defaultdict(lambda: ([], []))
         for row, result in zip(self.data, self.results):
 
-            # Look up the symbol in the current row in the children dictionary, and adds the
-            # current row and result to the collections stored at that symbol
+            # Look up the symbol in the current row in the children
+            # dictionary, and adds the current row and result to the
+            # collections stored at that symbol
             data, results = symbol_to_data[row[column]]
             data.append(row)
             results.append(result)
 
-        self.children = {symbol: self.__class__(data=np.array(data), results=results, parent=self)
-                         for symbol, (data, results) in symbol_to_data.items()}
+        self.children = {
+            symbol: self.__class__(data=np.array(data),
+                                   results=results,
+                                   parent=self)
+            for symbol, (data, results) in symbol_to_data.items()
+        }
 
     def best_split(self, col_index, column, results):
         """
-            Consumes a column and associated data, and returns the best gain achievable from splitting on that column
-            and optionally a splitter function that can be used to split the data
+            Consumes a column and associated data, and returns the best gain
+            achievable from splitting on that column and optionally a splitter
+            function that can be used to split the data
         :param column: 1D array of observations
         :param results: corresponding results
-        :return: best gain achievable on that column (float) and possibly a splitter for it (function)
+        :return: best gain achievable on that column (float) and possibly a
+            splitter for it (function)
         """
         partitions = defaultdict(list)
         for value, result in zip(column, results):
             partitions[value].append(result)
 
-        return self.ColumnInfo(column=col_index, gain=self.measure_gain(results, *partitions.values()), splitter=None)
+        return self.ColumnInfo(column=col_index,
+                               gain=self.measure_gain(results,
+                                                      *partitions.values()),
+                                                      splitter=None)
 
 
 class EntropyMixin(DecisionTree):
@@ -293,8 +347,8 @@ class EntropyMixin(DecisionTree):
 
     def measure_function(self, results):
         """
-            Calculates the total dispersion in the input classifications by measure of the asymptotic
-            bit rate transfer requirements
+            Calculates the total dispersion in the input classifications by
+            measure of the asymptotic bit rate transfer requirements
         :param results: A 1D array of classifications
         :return: float representing entropy of input set
         """
@@ -304,7 +358,8 @@ class EntropyMixin(DecisionTree):
         for result in results:
             result_dist[result] += 1
 
-        return -sum(lg(count / element_count) * (count / element_count) for count in result_dist if count)
+        return -sum(lg(count / element_count) * (count / element_count)
+                    for count in result_dist if count)
 
     def value(self):
         """
@@ -316,8 +371,10 @@ class EntropyMixin(DecisionTree):
 
     def predict(self, data):
         """
-            Consumes test observations classifies them based on the heuristics of this tree
-        :param data: matrix of observational data that the tree was not trained on
+            Consumes test observations classifies them based on the heuristics
+            of this tree
+        :param data: matrix of observational data that the tree was not
+            trained on
         :return: vector of classifications
         """
         return map(self.classify, data)
@@ -325,9 +382,11 @@ class EntropyMixin(DecisionTree):
     @abstractmethod
     def classify(self, observation):
         """
-            Consumes an observation and outputs the classification that this tree would apply to the row
+            Consumes an observation and outputs the classification that this
+            tree would apply to the row
         :param observation: a row of observational data
         :return: the label that would be applied to the given row
         """
-        raise NotImplementedError("EntropyTrees must implement a classify method "
-                                  "that applies a prediction to an observation")
+        raise NotImplementedError("EntropyTrees must implement a classify "
+                                  "method that applies a prediction to an "
+                                  "observation")
