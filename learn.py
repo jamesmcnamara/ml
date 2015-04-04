@@ -284,10 +284,7 @@ class DecisionTreeDataStore(DataStore, CrossFoldMixin):
             self.data = self.binarize_columns(self.data)
 
         # Set up testing functions
-        if self.debug:
-            self.test_func = self.scikit_classifier if self.tree_type == EntropyTree else self.scikit_regressor
-        else:
-            self.test_func = self.accuracy
+        self.test_func = self.accuracy
 
         # Reference data for classifiers
         if self.tree_type != RegressionTree:
