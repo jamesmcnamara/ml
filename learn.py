@@ -166,7 +166,7 @@ class DataStore:
         else:
             json.load(open(infile.name.replace(".csv", ".meta")))
 
-        self.width = self.meta["width"],
+        self.width = self.meta["width"]
         self.height = self.meta["height"]
         self.data_type = self.meta["data_type"]
         self.result_type = self.meta["result_type"]
@@ -178,9 +178,8 @@ class DataStore:
                                                self.height,
                                                infile)
         if validation:
-            _replaced_name = validation.name.replace("Train",
-                                                           "Validation") \
-                                                  .replace(".csv", ".meta"))
+            _replaced_name = (validation.name.replace("Train", "Validation")
+                              .replace(".csv", ".meta"))
             validation_meta = json.load(open(_replaced_name))
             self.validation_both = self.extract(validation_meta["data_type"],
                                                 validation_meta["result_type"],
@@ -199,9 +198,6 @@ class DataStore:
             self.k_validation = cross
         else:
             self.k_validation = len(self.data)
-
-        # Whether or not to use built in libraries to test the algorithms
-        self.debug = parser.debug
 
         # Normalization method to use
         self.normalization = normalization
@@ -228,8 +224,7 @@ class DataStore:
             return [cast(val) for val in values]
 
         def result_trans(result):
-            return float(y) if result_type == "float" else y
-
+            return float(result) if result_type == "float" else result
         data = np.zeros((height, width - 1), data_type)
         results = [""] * height
         for i, line in enumerate(file):
@@ -381,13 +376,14 @@ class DecisionTreeDataStore(DataStore, CrossFoldMixin):
             sd = stdev(accuracies)
 
             if self.tree_type != RegressionTree:
-            if self.confusion:
-                print(sum(accuracies))
+                print("Categorization accuracy was {} with sd {}"
+                      .format(avg * 100, sd * 100))
             else:
-                avg = mean(accuracies)
-                sd = stdev(accuracies)
+                print("Regression accuracy was {} and sd was {}"
+                      .format(avg * 100, sd * 100))
 
-    def accuracy(self, data_chunks, result_chunks, test_data, test_results, normalization, eta, *args):
+    def accuracy(self, data_chunks, result_chunks, test_data,
+                 test_results, normalization, eta, *args):
         """
             Uses our decision tree to test the given data
         :param eta: eta min for the tree to be built
@@ -397,14 +393,15 @@ class DecisionTreeDataStore(DataStore, CrossFoldMixin):
         :param test_results: results for test data
         :returns: The percentage of accurate predictions
         """
-        d = self.tree_type(data=normalize(normalization, data_chunks), results=result_chunks,
-                           result_types=self.result_types, eta=eta)
+        d = self.tree_type(data=normalize(normalization, data_chunks),
+                           results=result_chunks, eta=eta,
+                           result_types=self.result_types)
 
-        return sum(map(lambda exp, act: exp == act,
-                       d.predict(normalize_validation(normalization,
-                                                      data_chunks,
-                                                      test_data)),
-                       test_results)) / len(test_results)
+        return mean(map(lambda exp, act: exp == act,
+                        d.predict(normalize_validation(normalization,
+                                                       data_chunks,
+                                                       test_data)),
+                        test_results))
 
     @staticmethod
     def binarize_columns(data):
@@ -522,7 +519,7 @@ class TextDataStore:
             if event_model == "multinomial":
                 data[doc_id - 1, word_id] = count
             else:
-                data[doc_id - 1], word_id] = 1
+                data[doc_id - 1, word_id] = 1
 
             freq[word_id, 0] = word_id
             freq[word_id, 1] += count

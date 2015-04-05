@@ -279,8 +279,8 @@ class BinaryTree(DecisionTree):
             return a corresponding subtree evaluated from left-to-right.
             e.g. self["llr"] returns the self.left.left.right
         """
-        assert item.count("l") + item.count("r") == len(item),
-               "Indexing must include only 'l' and 'r' characters"
+        assert (item.count("l") + item.count("r") == len(item),
+               "Indexing must include only 'l' and 'r' characters")
         if len(item) == 1:
             return self.left if item == "l" else self.right
 
