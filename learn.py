@@ -2,7 +2,6 @@ from abc import ABCMeta, abstractmethod
 from collections import namedtuple
 from itertools import compress
 from math import sqrt
-from operator import eq
 from os.path import basename
 from re import match
 
@@ -397,8 +396,8 @@ class DecisionTreeDataStore(DataStore, CrossFoldMixin):
                            results=result_chunks, eta=eta,
                            result_types=self.result_types)
 
-        return mean(map(lambda exp, act: exp == act,
-                        d.predict(normalize_validation(normalization,
+        return mean(int(exp == act) for exp, act in
+                    zip(d.predict(normalize_validation(normalization,
                                                        data_chunks,
                                                        test_data)),
                         test_results))
@@ -484,28 +483,41 @@ class RegressionDataStore(DataStore, CrossFoldMixin):
         else:
             r = NormalRegressor(training_data, training_results,
                                 normalization=normalization, **kwargs)
-        return rmse(r.predict(test_data), test_results)
+        return r.error(r.predict(test_data), r.ws, test_results)
 
 
 class TextDataStore:
 
-    def __init__(self, event_model="multinomial", vocab_size=100, train_prefix=None, test_prefix=None):
+    def __init__(self, event_model="multinomial", vocab_size=100, 
+            train_prefix=None, test_prefix=None):
+        print("starting init")
         self.model = event_model
         self.size = vocab_size
         data, self.vocab = self.extract(train_prefix, self.size, event_model)
         self.data = self.restrict_data(data, self.vocab)
 
-        test, self.result_vocab = self.extract(test_prefix, self.size, event_model)
-        self.test = self.restrict_data(test, self.vocab)
+        results, self.result_vocab = self.extract(test_prefix, 
+                                                  self.size, event_model)
+        self.results = self.restrict_data(results, self.vocab)
 
-        get_labels = lambda prefix: [int(line.split()[0]) for line in open(prefix + ".label")]
+        get_labels = lambda prefix: [int(line.split()[0]) 
+                                     for line in open(prefix + ".label")]
         self.data_labels = get_labels(train_prefix)
         self.result_labels = get_labels(test_prefix)
 
         self.breakpoints = self.get_label_breakpoints(self.data_labels)
+        self.result_breakpoints = self.get_label_breakpoints(self.result_labels)
+        print("ending init")
 
     @staticmethod
     def extract(prefix, head, event_model):
+        """
+            ETL method for specific data format
+        :param prefix: file prefix
+        :param head: number of words to restrict the vocab to
+        :param event_model: multinomial or multivariate
+        :return: (document by word matrix, head most frequent words)
+        """
         data_file = open(prefix + ".data")
         meta = json.load(open(prefix + ".meta"))
         word_count = meta["word_count"] + 1
@@ -520,14 +532,21 @@ class TextDataStore:
                 data[doc_id - 1, word_id] = count
             else:
                 data[doc_id - 1, word_id] = 1
-
+            
             freq[word_id, 0] = word_id
             freq[word_id, 1] += count
-
+        head = head if head != "All" else len(data)
         return data, freq[freq[:, -1].argsort()][:-head:-1, 0]
 
     @staticmethod
     def restrict_data(data, indicies):
+        """
+            Restricts the vocabulary in the input data matrix to only include
+            the words specified by indices
+        :param data: an N*M matrix of documents by word frequencies
+        :param indicies: a 1*K array of word indicies to include
+        :return: a N*K array of document word array in the translated space
+        """
         trimmed_data = np.zeros((len(data), len(indicies)), np.int32)
         for i in range(len(data)):
             trimmed_data[i] = [data[i, j] for j in indicies]
@@ -535,6 +554,12 @@ class TextDataStore:
 
     @staticmethod
     def get_label_breakpoints(labels):
+        """
+            Produces an array where ith and i+1th elements denote the
+            upper and lower bounds for class i in the input labels
+        :param labels: 1d array of sorted labels
+        :return: array of n+1 breakpoints, where n is the number of classes
+        """
         current_label = 0
         breakpoints = []
         for i, label in enumerate(labels):
@@ -543,6 +568,22 @@ class TextDataStore:
                 current_label = label
         breakpoints.append(i)
         return breakpoints
+    
+    def test(self, data, results):
+        """
+            Test the accuracy of this model on the given data, given that the
+            results should be as shown
+        :param data: test_data of the same dimensionality of training data
+        :param results: 1d array of corresponding labels
+        :return: float accuracy
+        """
+        clf = NaiveBayes(self.model, self.data, self.data_labels,
+                         self.vocab, self.breakpoints)
+        predictions = clf.predict(data)
+        accuracy = mean(int(predict == actual)
+                        for predict, actual in
+                        zip(predictions, results))
+        return accuracy
 
 if __name__ == "__main__":
     parser = load_args()
@@ -555,6 +596,6 @@ if __name__ == "__main__":
     elif parser.regression:
         ds = RegressionDataStore(**parser.__dict__)
         print("Average was: {}, Standard deviation was {}".format(*ds.test(ds.test_func)))
-    else:
+    elif parser.range:
         ds = DecisionTreeDataStore(parser)
         ds.test()

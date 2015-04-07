@@ -4,17 +4,15 @@ __author__ = 'jamesmcnamara'
 
 
 class NaiveBayes:
-    def __init__(self, datastore):
-        self.datastore = datastore
-        self.multi = datastore.model == "multinomial"
-        self.data = datastore.data
-        self.labels = datastore.data_labels
+    def __init__(self, model='multinomial', data=None, labels=None, vocab_size=None, breakpoints=None):
+        self.multi = model == "multinomial"
+        self.data = data
+        self.labels = labels
         self.label_count = self.labels[-1]
-        self.vocab = datastore.vocab
-        self.breakpoints = datastore.breakpoints
-        self.class_priors = [self.labels.count(i + 1)/len(datastore.data_labels)
+        self.vocab = vocab_size
+        self.breakpoints = breakpoints
+        self.class_priors = [self.labels.count(i + 1) / len(labels)
                              for i in range(self.label_count)]
-
         self.cond_probs = self.get_cond_probs()
 
     def get_cond_probs(self):
@@ -24,6 +22,7 @@ class NaiveBayes:
         :return: class by word matrix of the conditional probability where the probability of word i appearing in a
             document given that the document is from class j is given by result[j, i]
         """
+        print("in get_cond_probs")
         return self.get_cond_probs_static(self.label_count, self.data, self.breakpoints, self.multi)
 
     def predict(self, data):
@@ -32,6 +31,7 @@ class NaiveBayes:
         :param data: matrix of documents by the words that appear in them (either 1 or count)
         :return: stream of predictions
         """
+        print("starting predictions")
         return self.predict_static(data, self.cond_probs, self.class_priors, self.label_count, self.multi)
 
     @staticmethod

@@ -254,7 +254,9 @@ class BinaryTree(DecisionTree):
         :return: Float corresponding to the gain derived from partitioning on
             attr with bin_splitter
         """
-        add_elements_if = lambda val: [result for element, result in zip(attr, results) if bin_splitter(element) == val]
+        add_elements_if = lambda val: [result for element, result in
+                                       zip(attr, results)
+                                       if bin_splitter(element) == val]
 
         left, right = add_elements_if(True), add_elements_if(False)
         return self.measure_gain(results, left, right)

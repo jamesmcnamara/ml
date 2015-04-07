@@ -50,10 +50,10 @@ class TestRegressor:
             assert_almost_equal(pred, act)
 
     def test_rmse(self):
-        assert_almost_equal(self.grad.rmse(self.default_design,
+        assert_almost_equal(self.grad.error(self.default_design,
                                            [0, 0, 0, 0], self.fds.results),
                             7.33, delta=0.01)
-        assert_almost_equal(self.grad.rmse(self.default_design,
+        assert_almost_equal(self.grad.error(self.default_design,
                                            [0, 1, 1, 2], self.fds.results),
                             0.5, delta=0.01)
     
