@@ -1,3 +1,5 @@
+from statistics import mean
+
 from dtree.decision_tree import BinaryTree
 
 __author__ = 'jamesmcnamara'
@@ -59,7 +61,7 @@ class RegressionTree(BinaryTree):
         :param results: 1D array of integers
         :return: iterator which always yields the average of the input set
         """
-        avg = sum(results) / len(results)
+        avg = mean(results)
         while True:
             yield avg
 

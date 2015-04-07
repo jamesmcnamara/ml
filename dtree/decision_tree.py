@@ -3,6 +3,7 @@ from math import log2
 from abc import ABCMeta, abstractmethod
 from collections import namedtuple, defaultdict, Counter
 
+
 def lg(num):
     """
         Binary log of input, with the exception that lg(0) is 0
@@ -16,18 +17,21 @@ class DecisionTree:
 
     __metaclass__ = ABCMeta
 
-    def __init__(self, data_store=None, eta=0, data=None, results=None,
-                 parent=None):
-        exists = lambda *l: all(map(lambda element: element is not None and element is not 0, l))
-
-        assert (exists(data, results, parent) or
-                exists(data_store, results, data, eta)),
-               ("To construct a DecisionTree, you must either pass in "
-                "keyword arguments for data and results and either parent, "
-                "or eta and data_store")
+    def __init__(self, result_types=None, eta=0, data=None, results=None, parent=None):
         self.parent = parent
-        self.data_store = data_store or parent.data_store
         self.data, self.results = data, results
+        self.result_types = result_types or parent.result_types
+        self.eta = len(self.data) * (eta / 100) if eta else self.parent.eta
+        self.used_columns = list(parent.used_columns) if parent else []
+
+        # Stores which column this tree was split on,
+        # and possibly a function that consumes a value
+        self.ColumnInfo = namedtuple("ColInfo", ["column", "gain", "splitter"])
+        self.split_on = self.ColumnInfo(-1, -1, None)
+
+        self.parent = parent
+        self.data, self.results = data, results
+        self.result_types = result_types or parent.result_types
         self.eta = len(self.data) * (eta / 100) if eta else self.parent.eta
         self.used_columns = list(parent.used_columns) if parent else []
 
@@ -196,11 +200,7 @@ class BinaryTree(DecisionTree):
             returns whether it goes into the left or right sub tree
         """
         left, left_results, right, right_results = [], [], [], []
-        if splitter is None:
-            import code
-            code.interact(local=locals())
-        # Create right and left data sets by using the splitter to split on
-        # column
+        # Create right and left data sets by using the splitter to split on column
         for i, (row, result) in enumerate(zip(self.data, self.results)):
             if splitter(row[column]):
                 left.append(row)
@@ -254,7 +254,9 @@ class BinaryTree(DecisionTree):
         :return: Float corresponding to the gain derived from partitioning on
             attr with bin_splitter
         """
-        add_elements_if = lambda val: [result for element, result in zip(attr, results) if bin_splitter(element) == val]
+        add_elements_if = lambda val: [result for element, result in
+                                       zip(attr, results)
+                                       if bin_splitter(element) == val]
 
         left, right = add_elements_if(True), add_elements_if(False)
         return self.measure_gain(results, left, right)
@@ -279,8 +281,8 @@ class BinaryTree(DecisionTree):
             return a corresponding subtree evaluated from left-to-right.
             e.g. self["llr"] returns the self.left.left.right
         """
-        assert item.count("l") + item.count("r") == len(item),
-               "Indexing must include only 'l' and 'r' characters"
+        assert (item.count("l") + item.count("r") == len(item),
+               "Indexing must include only 'l' and 'r' characters")
         if len(item) == 1:
             return self.left if item == "l" else self.right
 
@@ -352,10 +354,11 @@ class EntropyMixin(DecisionTree):
         :param results: A 1D array of classifications
         :return: float representing entropy of input set
         """
-        result_dist = [0] * len(self.data_store.result_types)
+        result_dist = [0] * len(self.result_types)
         element_count = len(results)
 
-        result_dist = [result_dist[result] += 1 for result in results]
+        for result in results:
+            result_dist[result] += 1
 
         return -sum(lg(count / element_count) * (count / element_count)
                     for count in result_dist if count)

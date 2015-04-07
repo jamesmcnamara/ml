@@ -1,62 +1,20 @@
 __author__ = 'jamesmcnamara'
 from itertools import count
-from math import sqrt
-
+from math import sqrt, exp, log
+from statistics import mean
 import numpy as np
 
 
+from utils.normalization import normalize, normalize_validation
+
+
 class Regressor:
-    def __init__(self, design, ys, datastore, **kwargs):
-        self.design = self.pad(design)
+    def __init__(self, design, ys, normalization="z-score", **kwargs):
+        self.normalization = normalization
+        self.original = design
+        self.design = self.pad(normalize(normalization, design))
         self.ys = ys
-
-        self.datastore = datastore
         self.ws = np.zeros(len(self.design.T))
-        if datastore.use_gradient:
-            self.step = datastore.step
-            self.tolerance = datastore.tolerance
-            self.iterations = datastore.iterations
-            self.collect_rmse = datastore.collect_rmse
-            self.rmses = []
-            self.ws = self.gradient_descent(self.design, self.ys, self.ws)
-        elif "ridge" in kwargs:
-            self.ws = self.ridge_regression(self.design, self.ys, kwargs["ridge"])
-        else:
-            self.ws = self.normal_equations(self.design, ys)
-
-    def gradient_descent(self, design, ys, ws, step=None, tolerance=None, iterations=None):
-        """
-            Given a design matrix and a vector of labels, (and optionally some sensitivity parameters)
-             runs the gradient descent algorithm until convergence within epsilon or the number of
-             iterations is reached
-        :param design: Design matrix
-        :param ys: label vector
-        :param step: step size for update
-        :param tolerance: allowed epsilon
-        :param iterations: maximum number of iterations
-        :return: vector of parameters that approximately minimizes root mean squared error
-        """
-        step, tolerance, iterations = step or self.step, tolerance or self.tolerance, iterations or self.iterations
-        counter = count()
-        last_rmse = tolerance
-        while next(counter) < iterations and last_rmse - self.rmse(design, ws, ys) > tolerance:
-            last_rmse = self.rmse(design, ws, ys)
-            ws -= step * self.gradient(design, ws, ys)
-            if self.collect_rmse:
-                self.rmses.append(self.rmse(design, ws, ys))
-        return ws
-
-    @staticmethod
-    def gradient(design, ws, ys):
-        """
-            Calculates the gradient of the difference in predicted and actual output
-            values using the given parameter vector
-        :param design: observation matrix
-        :param ws: a vector of parameters
-        :param ys: vector observed values
-        :return: a vector representing the gradient
-        """
-        return sum(row * (np.dot(ws, row) - y) for row, y in zip(design, ys))
 
     def predict(self, data):
         """
@@ -65,8 +23,9 @@ class Regressor:
         :param data: a data set drawn from the same pool as the training data
         :return: a vector of y_hat predictions
         """
-
-        return [np.dot(self.ws, row) for row in self.pad(data)]
+        return np.dot(self.pad(normalize_validation(self.normalization,
+                                                    self.original, data)),
+                      self.ws)
 
     @staticmethod
     def pad(design):
@@ -81,6 +40,29 @@ class Regressor:
         return padded
 
     @staticmethod
+    def error(design, ws, ys):
+        """
+            Calculates the root mean squared error obtained by using the
+            given ws vector to regress the design matrix with ys as the
+            actual observed values
+        :param design: Design Matrix (N*M)
+        :param ws: weight prediction vector (M*1)
+        :param ys: observed results (N*1)
+        :return: Root mean squared error (scalar)
+        """
+        return sqrt(mean((np.dot(row, ws) - y) ** 2
+                         for row, y in zip(design, ys)))
+
+
+class NormalRegressor(Regressor):
+    def __init__(self, design, ys, **kwargs):
+        super().__init__(design, ys)
+        if "ridge" in kwargs:
+            self.ws = self.ridge_regression(self.design, self.ys, kwargs["ridge"])
+        else:
+            self.ws = self.normal_equations(self.design, ys)
+
+    @staticmethod
     def normal_equations(design, ys):
         """
             Uses the hat matrix to determine the optimal regression vector
@@ -91,25 +73,93 @@ class Regressor:
         return np.dot(np.dot(np.linalg.inv(np.dot(design.T, design)), design.T), ys)
 
     @staticmethod
-    def ridge_regression(design, ys, lmbda):
+    def ridge_regression(design, ys, alpha):
         """
             Uses the hat matrix to determine the optimal regression vector
         :param design: Design matrix
         :param ys: outputs
         :return: optimal weight vector
         """
-        return np.dot(np.dot(np.linalg.inv(np.dot(design.T, design) + lmbda * np.eye(len(design.T))), design.T), ys)
+        return np.dot(np.dot(np.linalg.inv(np.dot(design.T, design) + alpha * np.eye(len(design.T))), design.T), ys)
+
+
+class GradientRegressor(Regressor):
+    def __init__(self, design, ys, step=1e-3, tolerance=1e-3, iterations=1e5, **kwargs):
+        super().__init__(design, ys, **kwargs)
+        self.step = step
+        self.tolerance = tolerance
+        self.iterations = iterations
+        self.descent = kwargs.get("descent", True)
+        self.ws = self.gradient_descent(self.design, self.ys, self.ws, descent=self.descent)
+
+    def gradient_descent(self, design, ys, ws, step=None, tolerance=None,
+                         iterations=None, descent=True):
+        """
+            Given a design matrix and a vector of labels, (and optionally some
+            sensitivity parameters) runs the gradient descent algorithm until
+            convergence within epsilon or the number of iterations is reached
+        :param design: Design matrix
+        :param ys: label vector
+        :param step: step size for update
+        :param tolerance: allowed epsilon
+        :param iterations: maximum number of iterations
+        :return: vector of parameters that approximately
+            minimizes error function
+        """
+        step, tolerance, iterations = step or self.step, tolerance or self.tolerance, iterations or self.iterations
+        counter = count()
+        current_error = self.error(design, ws, ys)
+        last_error = current_error + tolerance + 1
+        while next(counter) < iterations and (last_error - current_error > tolerance
+                                              or current_error > last_error):
+            last_error = current_error
+            update = step * self.gradient(design, ws, ys)
+            if descent:
+                ws -= update
+            else:
+                ws += update
+            # ws -= update if descent else -update
+            current_error = self.error(design, ws, ys)
+        return ws
 
 
     @staticmethod
-    def rmse(design, ws, ys):
+    def gradient(design, ws, ys):
         """
-            Calculates the root mean squared error obtained by using the given ws vector to
-            regress the design matrix with ys as the actual observed values
+            Calculates the gradient of the difference in predicted and actual output
+            values using the given parameter vector
+        :param design: observation matrix
+        :param ws: a vector of parameters
+        :param ys: vector observed values
+        :return: a vector representing the gradient
+        """
+        return sum(row * (np.dot(ws, row) - y) for row, y in zip(design, ys))
+
+
+class LogisticRegressor(GradientRegressor):
+    def __init__(self, design, ys, step=1e-3, tolerance=1e-3, iterations=1e5, **kwargs):
+        super().__init__(design, ys, step, tolerance, iterations, descent=False, **kwargs)
+
+    @staticmethod
+    def gradient(design, ws, ys):
+        return sum(np.dot(x, y - LogisticRegressor.prob(x, ws, y=1))
+                   for x, y in zip(design, ys))
+
+    @staticmethod
+    def prob(x, ws, y=0):
+        return 1 / (1 + exp(-(1 if y else -1) * np.dot(ws, x)))
+
+    @staticmethod
+    def error(design, ws, ys):
+        """
+            Calculates the root mean squared error obtained by using the
+            given ws vector to regress the design matrix with ys as the
+            actual observed values
         :param design: Design Matrix (N*M)
         :param ws: weight prediction vector (M*1)
         :param ys: observed results (N*1)
-        :return: Root mean squared error (scalar)
+        :return: log loss (scalar)
         """
-        return sqrt(sum((np.dot(ws, row) - y) ** 2 for row, y in zip(design, ys)) / len(design))
-
+        pm_ys = np.array([1 if y == 1 else -1 for y in ys])
+        beta = np.dot(pm_ys, np.dot(design, ws))
+        return log(1 / (1 + exp(-beta)))

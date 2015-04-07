@@ -2,7 +2,6 @@ from abc import ABCMeta, abstractmethod
 from collections import namedtuple
 from itertools import compress
 from math import sqrt
-from operator import eq
 from os.path import basename
 from re import match
 
@@ -14,7 +13,7 @@ from statistics import stdev, mean
 from dtree.classification_tree import EntropyTree, CategoricalEntropyTree
 from dtree.regression_tree import RegressionTree
 from text_classification.NaiveBayes import NaiveBayes
-from regression.regression import Regressor
+from regression.regression import GradientRegressor, NormalRegressor, LogisticRegressor
 from utils.normalization import normalize, normalize_validation
 
 __author__ = 'jamesmcnamara'
@@ -158,14 +157,15 @@ def generate_meta(file):
 class DataStore:
     __metaclass__ = ABCMeta
 
-    def __init__(self, parser):
+    def __init__(self, meta=None, infile=None, validation=None, powers=1, 
+                 cross=10, normalization="z-score"):
         # Load data
-        if parser.meta:
-            self.meta = json.load(parser.meta)
+        if meta:
+            self.meta = json.load(meta)
         else:
-            json.load(open(parser.infile.name.replace(".csv", ".meta")))
+            json.load(open(infile.name.replace(".csv", ".meta")))
 
-        self.width = self.meta["width"],
+        self.width = self.meta["width"]
         self.height = self.meta["height"]
         self.data_type = self.meta["data_type"]
         self.result_type = self.meta["result_type"]
@@ -175,38 +175,34 @@ class DataStore:
                                                self.result_type,
                                                self.width,
                                                self.height,
-                                               parser.infile)
-        if parser.validation:
-            replaced_name = parser.validation.name.replace("Train",
-                                                           "Validation") \
-                                                  .replace(".csv", ".meta"))
-            validation_meta = json.load(open)
+                                               infile)
+        if validation:
+            _replaced_name = (validation.name.replace("Train", "Validation")
+                              .replace(".csv", ".meta"))
+            validation_meta = json.load(open(_replaced_name))
             self.validation_both = self.extract(validation_meta["data_type"],
                                                 validation_meta["result_type"],
                                                 validation_meta["width"],
                                                 validation_meta["height"],
-                                                parser.validation)
+                                                validation)
             self.validation_data, self.validation_results = self.validation_both
-        if parser.powers > 1:
-            self.data = self.add_powers(self.data, parser.powers)
-            if parser.validation:
+        if powers > 1:
+            self.data = self.add_powers(self.data, powers)
+            if validation:
                 self.validation_data = self.add_powers(self.validation_data,
-                                                       parser.powers)
+                                                       powers)
 
         # Number of folds to perform cross validation on
-        if parser.cross != 1:
-            self.k_validation = parser.cross
+        if cross != 1:
+            self.k_validation = cross
         else:
             self.k_validation = len(self.data)
 
-        # Whether or not to use built in libraries to test the algorithms
-        self.debug = parser.debug
-
         # Normalization method to use
-        self.normalization = parser.normalization
+        self.normalization = normalization
 
         # Number of powers to pad out the dataset
-        self.powers = parser.powers
+        self.powers = powers
 
         # Clean Data
         self.shuffle()
@@ -223,11 +219,11 @@ class DataStore:
             data
         """
         def transform(values):
-            return list(map(float if data_type == "float" else str, values))
+            cast = float if data_type == "float" else str
+            return [cast(val) for val in values]
 
         def result_trans(result):
-            return float(y) if result_type == "float" else y
-
+            return float(result) if result_type == "float" else result
         data = np.zeros((height, width - 1), data_type)
         results = [""] * height
         for i, line in enumerate(file):
@@ -316,13 +312,13 @@ class CrossFoldMixin:
         mask = lambda lists: np.concatenate(list(compress(lists, mask_mat)))
         return accuracy_func(mask(data_chunks), mask(result_chunks),
                              np.array(data_chunks[i]),
-                             np.array(result_chunks[i]), normalization, *args,
-                             **kwargs)
+                             np.array(result_chunks[i]),
+                             normalization, *args, **kwargs)
 
     @staticmethod
     def chunk(data, segments):
         """
-            Consumes a list and a number and returns a the input list split
+            Consumes a list and a number and returns the input list split
             into n chunks in order
         """
         return list(zip(*[iter(data)] * (len(data) // segments)))
@@ -336,25 +332,18 @@ class DecisionTreeDataStore(DataStore, CrossFoldMixin):
         "categorical": CategoricalEntropyTree
     }
 
-    def __init__(self, parser):
-        super().__init__(parser)
-        self.tree_type = DecisionTreeDataStore.tree_map[parser.tree]
-        self.confusion = parser.with_confusion
-        self.start, self.stop, self.step = parser.range
+    def __init__(self, tree="entropy", binary_splits=False, **kwargs):
+        super().__init__(**kwargs)
+        self.tree_type = DecisionTreeDataStore.tree_map[tree]
+        self.start, self.stop, self.step = range
 
         # Clean Data
         self.shuffle()
-        if parser.binary_splits:
+        if binary_splits:
             self.data = self.binarize_columns(self.data)
 
         # Set up testing functions
-        if self.debug:
-            if self.tree_type == EntropyTree:
-                self.test_func = self.scikit_classifier
-            else:
-                self.scikit_regressor
-        else:
-            self.test_func = self.accuracy
+        self.test_func = self.accuracy
 
         # Reference data for classifiers
         if self.tree_type != RegressionTree:
@@ -380,27 +369,20 @@ class DecisionTreeDataStore(DataStore, CrossFoldMixin):
             validation, where k is the k validation parameter
         """
         for eta_percent in range(self.start, self.stop + 1, self.step):
-            accuracies = self.cross_validation(self.accuracy, self.data,
-                                               self.results,
-                                               self.k_validation,
-                                               self.normalization, eta_percent)
-            if self.confusion:
-                print(sum(accuracies))
+            accuracies = self.cross_validation(self.accuracy, self.data, self.results,
+                                               self.k_validation, self.normalization,  eta_percent)        
+            avg = mean(accuracies)
+            sd = stdev(accuracies)
+
+            if self.tree_type != RegressionTree:
+                print("Categorization accuracy was {} with sd {}"
+                      .format(avg * 100, sd * 100))
             else:
-                avg = mean(accuracies)
-                sd = stdev(accuracies)
+                print("Regression accuracy was {} and sd was {}"
+                      .format(avg * 100, sd * 100))
 
-                if self.tree_type != RegressionTree:
-                    print("{}% eta gave a classification accuracy of {:.2f}% "
-                          "with a standard deviation of "
-                          "{:.2f}%".format(eta_percent, avg * 100, sd * 100))
-                else:
-                    print("{}% eta had an average MSE of {:.2f} with a "
-                          "standard deviation of "
-                          "{:.2f}%".format(eta_percent, avg, sd))
-
-    def accuracy(self, data_chunks, result_chunks, test_data, test_results,
-                 normalization, eta, *args):
+    def accuracy(self, data_chunks, result_chunks, test_data,
+                 test_results, normalization, eta, *args):
         """
             Uses our decision tree to test the given data
         :param eta: eta min for the tree to be built
@@ -411,13 +393,14 @@ class DecisionTreeDataStore(DataStore, CrossFoldMixin):
         :returns: The percentage of accurate predictions
         """
         d = self.tree_type(data=normalize(normalization, data_chunks),
-                           results=result_chunks, data_store=self, eta=eta)
+                           results=result_chunks, eta=eta,
+                           result_types=self.result_types)
 
-        return sum(map(lambda exp, act: exp == act,
-                       d.predict(normalize_validation(normalization,
-                                                      data_chunks,
-                                                      test_data)),
-                       test_results)) / len(test_results)
+        return mean(int(exp == act) for exp, act in
+                    zip(d.predict(normalize_validation(normalization,
+                                                       data_chunks,
+                                                       test_data)),
+                        test_results))
 
     @staticmethod
     def binarize_columns(data):
@@ -453,64 +436,23 @@ class DecisionTreeDataStore(DataStore, CrossFoldMixin):
         return bin_data
 
 
-    def scikit_classifier(self, eta, data_chunks, result_chunks, test_data,
-                          test_results, normalization):
-        """
-            Uses scikit learns decision tree classifier to test the given data
-            to compare our success
-        :param eta: eta min for the tree to be built
-        :param data_chunks: Training data
-        :param result_chunks: Training data results
-        :param test_data: test data
-        :param test_results: results for test data
-        :returns: The percentage of accurate predictions
-        """
-        from sklearn.tree import DecisionTreeClassifier
-        clf = DecisionTreeClassifier(criterion="entropy",
-                                     min_samples_split=eta)
-        clf.fit(normalize(normalization, data_chunks), result_chunks)
-        pred_sum =sum(map(eq, test_results, clf.predict(test_data)))
-        return pred_sum / len(test_data)
-
-    def scikit_regressor(self, eta, data_chunks, result_chunks, test_data,
-                         test_results, normalization):
-        """
-            Uses scikit learns decision tree classifier to test the given data
-            to compare our success
-        :param eta: eta min for the tree to be built
-        :param data_chunks: Training data
-        :param result_chunks: Training data results
-        :param test_data: test data
-        :param test_results: results for test data
-        :param normalization: type of normailization to use
-        """
-        from sklearn.tree import DecisionTreeRegressor
-        clf = DecisionTreeRegressor(min_samples_split=eta)
-        clf.fit(data_chunks, result_chunks)
-        predicted = clf.predict(test_data)
-        return RegressionTree.mean_squared_error(test_results, predicted)
-
-
 class RegressionDataStore(DataStore, CrossFoldMixin):
 
-    def __init__(self, parser):
-        super().__init__(parser)
-        self.use_gradient = parser.gradient_descent
-        self.collect_rmse = parser.plot_rmse
-        if self.use_gradient:
-            self.tolerance = parser.tolerance
-            self.step = parser.step
-            self.iterations = parser.iterations
+    def __init__(self, logistic=False, normal=False, gradient_descent=False,
+                 tolerance=1e-3, step=1e-3, iterations=1e5, **kwargs):
+        super().__init__(**kwargs)
+        self.gradient_descent = gradient_descent
+        self.logistic = logistic
+        self.normal_equations = normal
+        if gradient_descent or logistic:
+            self.tolerance = tolerance
+            self.step = step
+            self.iterations = iterations
 
-        self.test_func = self.accuracy
-
-    def test(self, accuracy_func, *args, **kwargs):
+    def test(self, **kwargs):
         if hasattr(self, "validation_data"):
-            return self.accuracy(self.data, self.results, self.validation_data,
-                                 self.validation_results, **kwargs), 0
-        accuracies = self.cross_validation(accuracy_func, self.data,
-                                           self.results, self.k_validation,
-                                           self.normalization, **kwargs)
+            return self.accuracy(self.data, self.results, self.validation_data, self.validation_results, **kwargs), 0
+        accuracies = self.cross_validation(self.accuracy, self.data, self.results, self.k_validation, self.normalization, **kwargs)
         avg = mean(accuracies)
         sd = stdev(accuracies)
         return avg, sd
@@ -518,38 +460,64 @@ class RegressionDataStore(DataStore, CrossFoldMixin):
     def accuracy(self, training_data, training_results, test_data,
                  test_results, normalization, **kwargs):
         """
-            Uses our decision tree to test the given data
+            creates a regressor from the given training data and results, tests its accuracy on
+             the given test_data
         :param data_chunks: Training data
         :param result_chunks: Training data results
         :param test_data: test data
         :param test_results: results for test data
         :returns: The percentage of accurate predictions
         """
-        r = Regressor(training_data, training_results, self, **kwargs)
-        return rmse(r.predict(test_data), test_results)
+        if self.gradient_descent:
+            r = GradientRegressor(training_data, training_results,
+                                  tolerance=self.tolerance,
+                                  step=self.step,
+                                  iterations=self.iterations,
+                                  normalization=normalization)
+        elif self.logistic:
+            r = LogisticRegressor(training_data, training_results,
+                                  tolerance=self.tolerance,
+                                  step=self.step,
+                                  iterations=self.iterations,
+                                  normalization=normalization)
+        else:
+            r = NormalRegressor(training_data, training_results,
+                                normalization=normalization, **kwargs)
+        return r.error(r.predict(test_data), r.ws, test_results)
 
 
 class TextDataStore:
 
-    def __init__(self, parser):
-        self.model = parser.event_model
-        self.size = parser.vocab_size + 1
-        data, self.vocab = self.extract(parser.train_prefix, self.size,
-                                        parser.event_model)
+    def __init__(self, event_model="multinomial", vocab_size=100, 
+            train_prefix=None, test_prefix=None):
+        print("starting init")
+        self.model = event_model
+        self.size = vocab_size
+        data, self.vocab = self.extract(train_prefix, self.size, event_model)
         self.data = self.restrict_data(data, self.vocab)
 
-        test, self.result_vocab = self.extract(parser.test_prefix, self.size,
-                                               parser.event_model)
-        self.test = self.restrict_data(test, self.vocab)
+        results, self.result_vocab = self.extract(test_prefix, 
+                                                  self.size, event_model)
+        self.results = self.restrict_data(results, self.vocab)
 
-        get_labels = lambda prefix: list(map(lambda line: int(line.split()[0]), open(prefix + ".label")))
-        self.data_labels = get_labels(parser.train_prefix)
-        self.result_labels = get_labels(parser.test_prefix)
+        get_labels = lambda prefix: [int(line.split()[0]) 
+                                     for line in open(prefix + ".label")]
+        self.data_labels = get_labels(train_prefix)
+        self.result_labels = get_labels(test_prefix)
 
         self.breakpoints = self.get_label_breakpoints(self.data_labels)
+        self.result_breakpoints = self.get_label_breakpoints(self.result_labels)
+        print("ending init")
 
     @staticmethod
     def extract(prefix, head, event_model):
+        """
+            ETL method for specific data format
+        :param prefix: file prefix
+        :param head: number of words to restrict the vocab to
+        :param event_model: multinomial or multivariate
+        :return: (document by word matrix, head most frequent words)
+        """
         data_file = open(prefix + ".data")
         meta = json.load(open(prefix + ".meta"))
         word_count = meta["word_count"] + 1
@@ -563,15 +531,22 @@ class TextDataStore:
             if event_model == "multinomial":
                 data[doc_id - 1, word_id] = count
             else:
-                data[doc_id - 1], word_id] = 1
-
+                data[doc_id - 1, word_id] = 1
+            
             freq[word_id, 0] = word_id
             freq[word_id, 1] += count
-
+        head = head if head != "All" else len(data)
         return data, freq[freq[:, -1].argsort()][:-head:-1, 0]
 
     @staticmethod
     def restrict_data(data, indicies):
+        """
+            Restricts the vocabulary in the input data matrix to only include
+            the words specified by indices
+        :param data: an N*M matrix of documents by word frequencies
+        :param indicies: a 1*K array of word indicies to include
+        :return: a N*K array of document word array in the translated space
+        """
         trimmed_data = np.zeros((len(data), len(indicies)), np.int32)
         for i in range(len(data)):
             trimmed_data[i] = [data[i, j] for j in indicies]
@@ -579,6 +554,12 @@ class TextDataStore:
 
     @staticmethod
     def get_label_breakpoints(labels):
+        """
+            Produces an array where ith and i+1th elements denote the
+            upper and lower bounds for class i in the input labels
+        :param labels: 1d array of sorted labels
+        :return: array of n+1 breakpoints, where n is the number of classes
+        """
         current_label = 0
         breakpoints = []
         for i, label in enumerate(labels):
@@ -587,25 +568,34 @@ class TextDataStore:
                 current_label = label
         breakpoints.append(i)
         return breakpoints
+    
+    def test(self, data, results):
+        """
+            Test the accuracy of this model on the given data, given that the
+            results should be as shown
+        :param data: test_data of the same dimensionality of training data
+        :param results: 1d array of corresponding labels
+        :return: float accuracy
+        """
+        clf = NaiveBayes(self.model, self.data, self.data_labels,
+                         self.vocab, self.breakpoints)
+        predictions = clf.predict(data)
+        accuracy = mean(int(predict == actual)
+                        for predict, actual in
+                        zip(predictions, results))
+        return accuracy
 
 if __name__ == "__main__":
     parser = load_args()
     if parser.generate_meta:
         generate_meta(parser.infile)
     if parser.text:
-        ts = TextDataStore(parser)
+        ts = TextDataStore(**parser.__dict__)
         clf = NaiveBayes(ts)
         predictions = clf.predict(ts.test)
-        from code import interact
-        interact(local=locals())
     elif parser.regression:
-        ds = RegressionDataStore(parser)
-        if parser.interactive:
-            from code import interact
-            interact(local=locals())
-
-        print("Average was: {}, Standard deviation was {}"
-              .format(*ds.test(ds.test_func)))
-    else:
+        ds = RegressionDataStore(**parser.__dict__)
+        print("Average was: {}, Standard deviation was {}".format(*ds.test(ds.test_func)))
+    elif parser.range:
         ds = DecisionTreeDataStore(parser)
         ds.test()
