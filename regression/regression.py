@@ -5,39 +5,26 @@ from statistics import mean
 import numpy as np
 
 
-from utils.normalization import normalize, normalize_validation
+from ml.utils.normalization import normalize, normalize_validation, pad
 
 
 class Regressor:
     def __init__(self, design, ys, normalization="z-score", **kwargs):
         self.normalization = normalization
         self.original = design
-        self.design = self.pad(normalize(normalization, design))
+        self.design = pad(normalize(normalization, design))
         self.ys = ys
         self.ws = np.zeros(len(self.design.T))
 
-    def predict(self, data):
+    def prep_test_data(self, data):
         """
             Uses the developed ws vector to make predictions for each row
             of the given data set
         :param data: a data set drawn from the same pool as the training data
         :return: a vector of y_hat predictions
         """
-        return np.dot(self.pad(normalize_validation(self.normalization,
-                                                    self.original, data)),
-                      self.ws)
-
-    @staticmethod
-    def pad(design):
-        """
-            Consumes a design matrix and adds a column of 1's at the beginning
-        :param design: a design matrix with N observations on M variables
-        :return: a design matrix with N observations on M+1 variables
-        """
-        h, w = design.shape
-        padded = np.ones((h, w + 1))
-        padded[:, 1:] = design
-        return padded
+        return pad(normalize_validation(self.normalization,
+                                        self.original, data))
 
     @staticmethod
     def error(design, ws, ys):
@@ -84,11 +71,12 @@ class NormalRegressor(Regressor):
 
 
 class GradientRegressor(Regressor):
-    def __init__(self, design, ys, step=1e-3, tolerance=1e-3, iterations=1e5, **kwargs):
+    def __init__(self, design, ys, step=1e-3, tolerance=1e-3, iterations=1e5, penalty=0, **kwargs):
         super().__init__(design, ys, **kwargs)
         self.step = step
         self.tolerance = tolerance
         self.iterations = iterations
+        self.penalty = penalty
         self.descent = kwargs.get("descent", True)
         self.ws = self.gradient_descent(self.design, self.ys, self.ws, descent=self.descent)
 
@@ -110,10 +98,11 @@ class GradientRegressor(Regressor):
         counter = count()
         current_error = self.error(design, ws, ys)
         last_error = current_error + tolerance + 1
+        print("In gradient descent")
         while next(counter) < iterations and (last_error - current_error > tolerance
                                               or current_error > last_error):
             last_error = current_error
-            update = step * self.gradient(design, ws, ys)
+            update = step * (self.gradient(design, ws, ys) - self.penalty * np.linalg.norm(ws))
             if descent:
                 ws -= update
             else:
@@ -135,6 +124,10 @@ class GradientRegressor(Regressor):
         """
         return sum(row * (np.dot(ws, row) - y) for row, y in zip(design, ys))
 
+    @staticmethod
+    def stochastic_gradient(row, ws, y):
+        return row * (np.dot(ws, row) - y)
+
 
 class LogisticRegressor(GradientRegressor):
     def __init__(self, design, ys, step=1e-3, tolerance=1e-3, iterations=1e5, **kwargs):
@@ -142,17 +135,44 @@ class LogisticRegressor(GradientRegressor):
 
     @staticmethod
     def gradient(design, ws, ys):
-        return sum(np.dot(x, y - LogisticRegressor.prob(x, ws, y=1))
-                   for x, y in zip(design, ys))
+        """
+            Calculates the gradient of the difference in predicted and actual output
+            values using the given parameter vector
+        :param design: observation matrix
+        :param ws: a vector of parameters
+        :param ys: vector observed values
+        :return: a vector representing the gradient of the logistic loss function
+        """
+        return sum(x * (y - LogisticRegressor.prob(x, ws)) for x, y in zip(design, ys))
+    
+    @staticmethod
+    def stochastic_gradient(row, ws, y):
+        """
+            Calculates the gradient of the difference in predicted and actual output
+            values using the given parameter vector for only one instance
+        :param design: observation matrix
+        :param ws: a vector of parameters
+        :param ys: vector observed values
+        :return: a vector representing the gradient
+        """
+        return row * (LogisticRegressor.prob(row, ws) - y)
 
     @staticmethod
-    def prob(x, ws, y=0):
+    def prob(x, ws, y=1):
+        """
+            Calculates the probability that the given row belongs to the
+            1's class, using the given ws parameter vector
+        :param x: 1*M vector consisting of one observation
+        :param ws: 1*M weights vector
+        :param y: label to predict, 1 or 0
+        :return: The probability that x belongs to class y
+        """
         return 1 / (1 + exp(-(1 if y else -1) * np.dot(ws, x)))
 
     @staticmethod
     def error(design, ws, ys):
         """
-            Calculates the root mean squared error obtained by using the
+            Calculates the logistic loss obtained by using the
             given ws vector to regress the design matrix with ys as the
             actual observed values
         :param design: Design Matrix (N*M)
@@ -160,6 +180,7 @@ class LogisticRegressor(GradientRegressor):
         :param ys: observed results (N*1)
         :return: log loss (scalar)
         """
-        pm_ys = np.array([1 if y == 1 else -1 for y in ys])
-        beta = np.dot(pm_ys, np.dot(design, ws))
-        return log(1 / (1 + exp(-beta)))
+        predictions = (LogisticRegressor.prob(x, ws) for x in design)
+        yhats = (max(1e-10, min(1-1e-10, y_hat)) for y_hat in predictions)
+        return sum(y * log(y_hat) + (1-y) * log(1-y_hat) 
+                   for y_hat, y in zip(yhats, ys)) 

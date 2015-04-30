@@ -4,17 +4,20 @@ from itertools import compress
 from math import sqrt
 from os.path import basename
 from re import match
+from sys import path
 
 import argparse
 import json
 import numpy as np
 from statistics import stdev, mean
+from sklearn.linear_model import LogisticRegression
 
-from dtree.classification_tree import EntropyTree, CategoricalEntropyTree
-from dtree.regression_tree import RegressionTree
-from text_classification.NaiveBayes import NaiveBayes
-from regression.regression import GradientRegressor, NormalRegressor, LogisticRegressor
-from utils.normalization import normalize, normalize_validation
+path.append("..")
+from ml.classifier.classification_tree import EntropyTree, CategoricalEntropyTree
+from ml.classifier.regression_tree import RegressionTree
+from ml.text_classification.NaiveBayes import NaiveBayes
+from ml.regression.regression import GradientRegressor, NormalRegressor, LogisticRegressor
+from ml.utils.normalization import normalize, normalize_validation
 
 __author__ = 'jamesmcnamara'
 
@@ -158,12 +161,12 @@ class DataStore:
     __metaclass__ = ABCMeta
 
     def __init__(self, meta=None, infile=None, validation=None, powers=1, 
-                 cross=10, normalization="z-score"):
+                 cross=10, normalization="z-score", supervised=True):
         # Load data
         if meta:
             self.meta = json.load(meta)
         else:
-            json.load(open(infile.name.replace(".csv", ".meta")))
+            self.meta = json.load(open(infile.name.replace(".csv", ".meta")))
 
         self.width = self.meta["width"]
         self.height = self.meta["height"]
@@ -175,7 +178,8 @@ class DataStore:
                                                self.result_type,
                                                self.width,
                                                self.height,
-                                               infile)
+                                               infile, 
+                                               supervised=supervised)
         if validation:
             _replaced_name = (validation.name.replace("Train", "Validation")
                               .replace(".csv", ".meta"))
@@ -208,7 +212,7 @@ class DataStore:
         self.shuffle()
 
     @staticmethod
-    def extract(data_type, result_type, width, height, file):
+    def extract(data_type, result_type, width, height, file, supervised=True):
         """
             Extracts and loads the data from the given file into a numpy
             matrix and the results into a numpy array
@@ -227,9 +231,12 @@ class DataStore:
         data = np.zeros((height, width - 1), data_type)
         results = [""] * height
         for i, line in enumerate(file):
-            *xs, y = line.split(",")
-            data[i] = transform(xs)
-            results[i] = result_trans(y.strip("\n"))
+            if supervised:
+                *xs, y = line.split(",")
+                data[i] = transform(xs)
+                results[i] = result_trans(y.strip("\n"))
+            else:
+                data[i] = transform(line.strip().split(","))
         return data, results
 
     @staticmethod
@@ -284,10 +291,15 @@ class CrossFoldMixin:
 
         data_chunks = CrossFoldMixin.chunk(data, k_validation)
         result_chunks = CrossFoldMixin.chunk(results, k_validation)
-        return [CrossFoldMixin.get_ith_accuracy(data_chunks, result_chunks,
-                                                accuracy_func, i,
-                                                normalization, *args, **kwargs)
-                for i in range(k_validation)]
+        accs = []
+        for i in range(k_validation):
+            acc = CrossFoldMixin.get_ith_accuracy(data_chunks, result_chunks,
+                                            accuracy_func, i,
+                                            normalization, *args, **kwargs)
+            print(acc)
+            accs.append(acc)
+        return accs
+                
 
     @staticmethod
     def get_ith_accuracy(data_chunks, result_chunks, accuracy_func, i,
@@ -439,7 +451,7 @@ class DecisionTreeDataStore(DataStore, CrossFoldMixin):
 class RegressionDataStore(DataStore, CrossFoldMixin):
 
     def __init__(self, logistic=False, normal=False, gradient_descent=False,
-                 tolerance=1e-3, step=1e-3, iterations=1e5, **kwargs):
+                 tolerance=1e-3, step=1e-3, iterations=1e5, penalty=0, **kwargs):
         super().__init__(**kwargs)
         self.gradient_descent = gradient_descent
         self.logistic = logistic
@@ -448,6 +460,7 @@ class RegressionDataStore(DataStore, CrossFoldMixin):
             self.tolerance = tolerance
             self.step = step
             self.iterations = iterations
+            self.penalty = penalty
 
     def test(self, **kwargs):
         if hasattr(self, "validation_data"):
@@ -479,11 +492,14 @@ class RegressionDataStore(DataStore, CrossFoldMixin):
                                   tolerance=self.tolerance,
                                   step=self.step,
                                   iterations=self.iterations,
-                                  normalization=normalization)
+                                  normalization=normalization,
+                                  penalty=self.penalty)
+            probs = (r.prob(row, r.ws) for row in r.prep_test_data(test_data))
+            return sum((prob - 0.5) * (act - 0.5) > 0 for prob, act in zip(probs, test_results)) / len(test_results)
         else:
             r = NormalRegressor(training_data, training_results,
                                 normalization=normalization, **kwargs)
-        return r.error(r.predict(test_data), r.ws, test_results)
+        return r.error(r.prep_test_data(test_data), r.ws, test_results)
 
 
 class TextDataStore:

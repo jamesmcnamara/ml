@@ -1,14 +1,13 @@
 __author__ = 'jamesmcnamara'
 
-from math import sqrt
 from random import random
 
 import numpy as np
 from nose.tools import assert_equal, assert_almost_equal
 from sklearn.linear_model import Ridge
 
-from learn import RegressionDataStore
-from regression.regression import NormalRegressor, GradientRegressor
+from ml.learn import RegressionDataStore
+from ml.regression.regression import NormalRegressor, GradientRegressor
 
 
 class FakeDataStore:

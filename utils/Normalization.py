@@ -39,19 +39,22 @@ def normalize_columns_arithmetic(data):
     # Helper function which maps the normalization function over a column from the input matrix
     def column_mapper(col):
         minimum, maximum = min(col), max(col)
-        return list(map(lambda x: (x - minimum) / (maximum - minimum), col))
+        if minimum == maximum:
+            return [0.5] * len(col)
+        return [(x - minimum) / (maximum - minimum) for x in col]
     return np.array([column_mapper(col) for col in data.T]).T
 
 
 def normalize_columns_z(data):
     """
-        For all columns with numeric type, normalize their values to be between [0,1]
-        using z-score normalization
+        For all columns with numeric type, normalize their values to be z 
+        scores using z-score normalization
     """
     # Helper function which maps the normalization function over a column from the input matrix
     def column_mapper(col):
         mu = sum(col) / len(col)
         sigma = stdev(col)
+        sigma = sigma if sigma else 1
         return list(map(lambda x: (x - mu) / sigma, col))
     return np.array([column_mapper(col) for col in data.T]).T
 
@@ -82,4 +85,15 @@ def center_columns(data):
         return list(map(lambda x: x - avg, col))
     return np.array(list(map(center_col, data.T))).T
 
+
+def pad(design):
+    """
+        Consumes a design matrix and adds a column of 1's at the beginning
+    :param design: a design matrix with N observations on M variables
+    :return: a design matrix with N observations on M+1 variables
+    """
+    h, w = design.shape
+    padded = np.ones((h, w + 1))
+    padded[:, 1:] = design
+    return padded
 
