@@ -1,4 +1,4 @@
-from dtree.decision_tree import BinaryTree, CategoricalTree, EntropyMixin
+from ml.classifier.decision_tree import BinaryTree, CategoricalTree, EntropyMixin
 
 __author__ = 'jamesmcnamara'
 

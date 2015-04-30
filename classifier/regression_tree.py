@@ -1,6 +1,6 @@
 from statistics import mean
 
-from dtree.decision_tree import BinaryTree
+from ml.classifier.decision_tree import BinaryTree
 
 __author__ = 'jamesmcnamara'
 
